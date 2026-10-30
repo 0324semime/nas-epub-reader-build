@@ -41,6 +41,14 @@ public final class SecurePrefs {
             .putString("domain",s.domain).putString("password",encrypted)
             .apply();
     }
+    /** The root of a share can be explicitly selected (empty folder path). */
+    public boolean hasFolderSelection() {
+        return preferences.getBoolean("folder_selected",
+            !preferences.getString("folder", "").isEmpty());
+    }
+    public void setFolderSelected(boolean selected) {
+        preferences.edit().putBoolean("folder_selected", selected).apply();
+    }
     public SmbRepository.Settings load(){
         SmbRepository.Settings s=new SmbRepository.Settings();
         s.host=preferences.getString("host","192.168.3.4");

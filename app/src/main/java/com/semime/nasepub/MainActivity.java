@@ -46,6 +46,13 @@ public final class MainActivity extends Activity {
     private final List<SmbRepository.RemoteBook> nasBooks = new ArrayList<>();
     private String nasStatus = "NASは未接続です";
     private volatile boolean nasBusy = false;
+    private boolean folderBrowserVisible = false;
+    private boolean folderBrowserLoading = false;
+    private String folderBrowserPath = "";
+    private String folderBrowserError = "";
+    private final List<SmbRepository.BrowseEntry> folderBrowserItems = new ArrayList<>();
+    private long folderBrowserRevision = 0;
+
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -88,35 +95,52 @@ public final class MainActivity extends Activity {
             if(!f.isFile()||f.length()>500000)continue;
             byte[] data=readFile(f,500000);
             JSONObject o=new JSONObject(new String(data,StandardCharsets.UTF_8));
-            if(dir.getName().equals(o.optString("id"))) books.add(o);
+            if(!dir.getName().equals(o.optString("id")))continue;
+            String source=o.optString("source","");
+            if(!source.isEmpty()){
+                if(!smbPreferences.hasFolderSelection())continue;
+                if(!dir.getName().equals(remoteId(source)))continue;
+                String selected=smbSettings.folder;
+                if(!selected.isEmpty()&&!source.toLowerCase(Locale.ROOT)
+                    .startsWith((selected+"\\").toLowerCase(Locale.ROOT)))continue;
+            }
+            books.add(o);
         }catch(Exception ignored){}
         Collections.sort(books, Comparator.comparing(x->x.optString("title","")));
         return books;
     }
     private void shelf(){
+        folderBrowserVisible=false;
+        ++folderBrowserRevision;
         openedBook=null;openedFolder=null;screen();
         LinearLayout bar=layout(true);bar.setPadding(d(14),d(10),d(12),d(6));
         TextView title=text("My EPUB Library",22,true);
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         bar.addView(button("＋ EPUB追加",v->pick()));
         root.addView(bar);
-        TextView note=text("ローカル読書版 v0.1  /  SMB・Tailscaleは次期対応",12,false);
-        note.setText("v0.2  /  SMB2・SMB3対応  /  Tailscaleは未実装");
+        TextView note=text("v0.3  /  NASフォルダ選択  /  Tailscaleは次期対応",12,false);
         note.setPadding(d(16),0,d(8),d(6));root.addView(note);
         LinearLayout smbBar=layout(true);
         smbBar.setPadding(d(8),0,d(8),d(4));
-        smbBar.addView(button("NAS設定",v->showSmbSettings()));
-        smbBar.addView(button("NAS更新",v->refreshNas()));
+        smbBar.addView(button("接続設定",v->showSmbSettings()));
+        smbBar.addView(button("フォルダ選択",v->startFolderBrowser()));
+        smbBar.addView(button("本棚更新",v->refreshNas()));
         root.addView(smbBar);
         TextView smbState=text(nasStatus,12,false);
         smbState.setPadding(d(16),0,d(12),d(6));
         root.addView(smbState);
+        TextView selected=text(smbPreferences.hasFolderSelection()
+          ? "📁 読み取り先: " + smbSettings.share
+            + (smbSettings.folder.isEmpty() ? " （共有の直下）" : "\\" + smbSettings.folder)
+          : "📁 読み取りフォルダが未設定です。まず「フォルダ選択」を押してください。",12,false);
+        selected.setPadding(d(16),0,d(12),d(10));
+        root.addView(selected);
         ScrollView scroll=new ScrollView(this);
         LinearLayout list=layout(false);list.setPadding(d(12),0,d(12),d(20));
         scroll.addView(list);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         renderRemoteBooks(list);
         List<JSONObject> books=readBooks();
-        if(books.isEmpty()){
+        if(books.isEmpty() && nasBooks.isEmpty()){
             TextView empty=text("まだ本がありません。\n「＋ EPUB追加」からEPUBを選択してください。",16,false);
             empty.setPadding(d(20),d(80),d(20),0);
             empty.setGravity(Gravity.CENTER);list.addView(empty);
@@ -216,42 +240,219 @@ public final class MainActivity extends Activity {
         LinearLayout columns=layout(false);
         columns.setPadding(d(16),d(10),d(16),d(10));
         view.addView(columns);
+        TextView hint=text("共有名を指定したあと、画面でフォルダを選びます。",13,false);
+        columns.addView(hint);
         EditText host=settingField("NASのIPアドレス / ホスト名",smbSettings.host,InputType.TYPE_CLASS_TEXT);
-        EditText share=settingField("SMB共有フォルダ名（例: Books）",smbSettings.share,InputType.TYPE_CLASS_TEXT);
-        EditText folder=settingField("共有内サブフォルダ（任意）",smbSettings.folder,InputType.TYPE_CLASS_TEXT);
+        EditText share=settingField("SMB共有フォルダ名（例: personal_folder）",smbSettings.share,InputType.TYPE_CLASS_TEXT);
         EditText user=settingField("SMBユーザー名",smbSettings.user,InputType.TYPE_CLASS_TEXT);
         EditText pass=settingField("SMBパスワード",smbSettings.password,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         EditText domain=settingField("ドメイン（通常は空欄）",smbSettings.domain,InputType.TYPE_CLASS_TEXT);
-        for(EditText f:new EditText[]{host,share,folder,user,pass,domain})columns.addView(f);
+        for(EditText f:new EditText[]{host,share,user,pass,domain})columns.addView(f);
         AlertDialog dialog=new AlertDialog.Builder(this)
             .setTitle("NAS接続設定（SMB2/3）")
             .setView(view)
             .setNegativeButton("キャンセル",null)
-            .setPositiveButton("保存して接続",null)
+            .setPositiveButton("保存してフォルダを探す",null)
             .create();
         dialog.setOnShowListener(a->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             SmbRepository.Settings next=new SmbRepository.Settings();
             next.host=host.getText().toString().trim();
             next.share=share.getText().toString().trim();
-            next.folder=folder.getText().toString().trim();
             next.user=user.getText().toString();
             next.password=pass.getText().toString();
             next.domain=domain.getText().toString();
+            boolean locationChanged=!smbSettings.host.equals(next.host)
+                || !smbSettings.share.equals(next.share)
+                || !smbSettings.user.equals(next.user)
+                || !smbSettings.domain.equals(next.domain);
+            next.folder=locationChanged?"":smbSettings.folder;
             try{
                 next.validate();
                 smbPreferences.save(next);
+                if(locationChanged)smbPreferences.setFolderSelected(false);
                 smbSettings=next;
                 nasBooks.clear();
                 dialog.dismiss();
-                refreshNas();
+                loadFolder(locationChanged?"":next.folder);
             }catch(Exception e){
-                new AlertDialog.Builder(this).setTitle("設定エラー").setMessage(e.getMessage()).setPositiveButton("閉じる",null).show();
+                new AlertDialog.Builder(this).setTitle("設定エラー")
+                    .setMessage(e.getMessage()).setPositiveButton("閉じる",null).show();
             }
         }));
         dialog.show();
     }
+
+    /** The folder list is a read-only file-browser view inside one SMB share. */
+    private void startFolderBrowser(){
+        if(nasBusy){
+            Toast.makeText(this,"処理の終了後に操作してください",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try{smbSettings.validate();}
+        catch(Exception e){showSmbSettings();return;}
+        loadFolder(smbPreferences.hasFolderSelection()?smbSettings.folder:"");
+    }
+    private static String parentFolder(String folder){
+        int index=folder.lastIndexOf('\\');
+        return index<0?"":folder.substring(0,index);
+    }
+    private void loadFolder(String path){
+        if(nasBusy)return;
+        folderBrowserVisible=true;
+        folderBrowserLoading=true;
+        folderBrowserPath=path;
+        folderBrowserError="";
+        folderBrowserItems.clear();
+        long revision=++folderBrowserRevision;
+        SmbRepository.Settings credentials=smbSettings.copy();
+        showFolderBrowser();
+        new Thread(()->{
+            try{
+                List<SmbRepository.BrowseEntry> items=SmbRepository.browse(credentials,path);
+                runOnUiThread(()->{
+                    if(!folderBrowserVisible || folderBrowserRevision!=revision)return;
+                    folderBrowserItems.clear();
+                    folderBrowserItems.addAll(items);
+                    folderBrowserLoading=false;
+                    showFolderBrowser();
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    if(!folderBrowserVisible || folderBrowserRevision!=revision)return;
+                    folderBrowserLoading=false;
+                    folderBrowserError=friendly(e);
+                    showFolderBrowser();
+                });
+            }
+        },"smb-browse").start();
+    }
+    private void showFolderBrowser(){
+        folderBrowserVisible=true;
+        screen();
+        LinearLayout header=layout(false);
+        header.setPadding(d(12),d(13),d(12),d(10));
+        header.setBackgroundColor(Color.rgb(35,35,35));
+        LinearLayout headerButtons=layout(true);
+        Button back=button("← 本棚",v->leaveBrowser());
+        headerButtons.addView(back);
+        TextView heading=text("NASフォルダ選択",19,true);
+        heading.setTextColor(Color.WHITE);
+        heading.setPadding(d(10),0,0,0);
+        headerButtons.addView(heading,new LinearLayout.LayoutParams(0,-2,1));
+        headerButtons.addView(button("更新",v->loadFolder(folderBrowserPath)));
+        header.addView(headerButtons);
+        TextView address=text(smbSettings.host+"  ›  "+smbSettings.share
+                +(folderBrowserPath.isEmpty()?"":"  ›  "+folderBrowserPath.replace("\\","  ›  ")),13,false);
+        address.setTextColor(Color.WHITE);
+        address.setPadding(d(6),d(9),d(6),d(3));
+        header.addView(address);
+        root.addView(header);
+
+        ScrollView scroll=new ScrollView(this);
+        LinearLayout list=layout(false);
+        list.setPadding(d(10),d(10),d(10),d(10));
+        scroll.addView(list);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+
+        if(!folderBrowserPath.isEmpty()){
+            TextView parent=text("⬆  1つ上のフォルダ",16,true);
+            parent.setPadding(d(14),d(16),d(8),d(16));
+            parent.setOnClickListener(v->loadFolder(parentFolder(folderBrowserPath)));
+            list.addView(parent);
+            addLine(list);
+        }
+        if(folderBrowserLoading){
+            TextView loading=text("NASから一覧を取得しています…",15,false);
+            loading.setPadding(d(12),d(30),d(12),d(30));
+            list.addView(loading);
+        }else if(!folderBrowserError.isEmpty()){
+            TextView err=text("一覧を取得できませんでした\n"+folderBrowserError,14,false);
+            err.setPadding(d(14),d(22),d(14),d(22));
+            list.addView(err);
+            list.addView(button("再接続",v->loadFolder(folderBrowserPath)));
+        }else{
+            int directories=0, files=0;
+            for(SmbRepository.BrowseEntry entry:folderBrowserItems){
+                if(entry.directory)directories++;else files++;
+            }
+            TextView summary=text(directories+" フォルダ ・ "+files+" ファイル",12,false);
+            summary.setPadding(d(9),d(5),d(9),d(9));list.addView(summary);
+            for(SmbRepository.BrowseEntry entry:folderBrowserItems){
+                LinearLayout row=layout(true);
+                row.setPadding(d(14),d(7),d(8),d(7));
+                TextView icon=text(entry.directory?"📁":"📄",28,false);
+                row.addView(icon);
+                LinearLayout labels=layout(false);
+                labels.setPadding(d(12),d(6),d(6),d(6));
+                TextView name=text(entry.name,16,entry.directory);
+                name.setMaxLines(2);
+                labels.addView(name);
+                if(!entry.directory && entry.name.toLowerCase(Locale.ROOT).endsWith(".epub")){
+                    TextView tag=text("EPUB",11,false);labels.addView(tag);
+                }
+                row.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
+                if(entry.directory){
+                    TextView arrow=text("›",24,false);row.addView(arrow);
+                    row.setOnClickListener(v->loadFolder(entry.path));
+                }
+                list.addView(row);
+                addLine(list);
+            }
+            if(folderBrowserItems.isEmpty()){
+                TextView empty=text("このフォルダは空です。",14,false);
+                empty.setPadding(d(14),d(30),d(14),d(30));list.addView(empty);
+            }
+            if(folderBrowserItems.size()>=1000){
+                TextView cut=text("一覧は先頭1000件まで表示しています。",12,false);
+                list.addView(cut);
+            }
+        }
+
+        LinearLayout footer=layout(false);
+        footer.setPadding(d(12),d(8),d(12),d(18));
+        footer.setBackgroundColor(Color.WHITE);
+        TextView subtitle=text("この場所からEPUBを検索して本棚を作ります。",12,false);
+        footer.addView(subtitle);
+        Button choose=button("✓ このフォルダを読み取り先に設定",v->selectCurrentFolder());
+        choose.setEnabled(!folderBrowserLoading && folderBrowserError.isEmpty());
+        footer.addView(choose);
+        root.addView(footer);
+    }
+    private void addLine(LinearLayout parent){
+        View line=new View(this);
+        line.setBackgroundColor(Color.rgb(225,225,225));
+        parent.addView(line,new LinearLayout.LayoutParams(-1,d(1)));
+    }
+    private void leaveBrowser(){
+        ++folderBrowserRevision;
+        folderBrowserVisible=false;
+        shelf();
+    }
+    private void selectCurrentFolder(){
+        if(folderBrowserLoading || !folderBrowserError.isEmpty())return;
+        try{
+            SmbRepository.Settings chosen=smbSettings.copy();
+            chosen.folder=folderBrowserPath;
+            chosen.validate();
+            smbPreferences.save(chosen);
+            smbPreferences.setFolderSelected(true);
+            smbSettings=chosen;
+            nasBooks.clear();
+            nasStatus="読み取り先を保存しました。EPUBを検索します…";
+            leaveBrowser();
+            refreshNas();
+        }catch(Exception e){
+            new AlertDialog.Builder(this).setTitle("保存できません")
+                .setMessage(friendly(e)).setPositiveButton("閉じる",null).show();
+        }
+    }
+
     private void refreshNas(){
         if(nasBusy)return;
+        if(!smbPreferences.hasFolderSelection()){
+            startFolderBrowser();
+            return;
+        }
         SmbRepository.Settings cfg=smbSettings.copy();
         try{cfg.validate();}catch(Exception e){showSmbSettings();return;}
         nasBusy=true;nasStatus="NASへ接続しています…";shelf();
@@ -458,5 +659,11 @@ public final class MainActivity extends Activity {
         if(file.isDirectory()){File[] list=file.listFiles();if(list!=null)for(File child:list)delete(child);}
         file.delete();
     }
-    @Override public void onBackPressed(){if(openedBook!=null)shelf();else super.onBackPressed();}
+    @Override public void onBackPressed(){
+        if(folderBrowserVisible){
+            if(folderBrowserPath.isEmpty())leaveBrowser();
+            else loadFolder(parentFolder(folderBrowserPath));
+        }else if(openedBook!=null)shelf();
+        else super.onBackPressed();
+    }
 }

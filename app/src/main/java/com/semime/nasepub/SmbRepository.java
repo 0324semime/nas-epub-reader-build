@@ -49,6 +49,53 @@ public final class SmbRepository {
         public final String path;
         public RemoteBook(String name,String path){this.name=name;this.path=path;}
     }
+    /** One visible row in the share browser. Lists directories and files, without downloading. */
+    public static final class BrowseEntry {
+        public final String name;
+        public final String path;
+        public final boolean directory;
+        public BrowseEntry(String name, String path, boolean directory) {
+            this.name=name; this.path=path; this.directory=directory;
+        }
+    }
+    /**
+     * Returns only immediate children. An empty path means the root of the
+     * configured share. Does not enumerate all shares on the server.
+     */
+    public static List<BrowseEntry> browse(Settings cfg, String relativePath) throws Exception {
+        final String path=cleanRelativePath(relativePath);
+        return connected(cfg,share->{
+            List<BrowseEntry> items=new ArrayList<>();
+            for(FileIdBothDirectoryInformation file:share.list(path)){
+                String name=file.getFileName();
+                if(name.equals(".")||name.equals("..")||name.contains("/")
+                    ||name.contains("\\")||name.indexOf('\0')>=0)continue;
+                boolean folder=EnumWithValue.EnumUtils.isSet(
+                    file.getFileAttributes(),FileAttributes.FILE_ATTRIBUTE_DIRECTORY);
+                String child=path.isEmpty()?name:path+"\\"+name;
+                items.add(new BrowseEntry(name,child,folder));
+                if(items.size()>=1000)break;
+            }
+            items.sort((a,b)->{
+                if(a.directory!=b.directory)return a.directory?-1:1;
+                return a.name.compareToIgnoreCase(b.name);
+            });
+            return items;
+        });
+    }
+    private static String cleanRelativePath(String input) {
+        if(input==null)return "";
+        String path=input.replace('/','\\').trim();
+        if(path.isEmpty())return "";
+        if(path.startsWith("\\")||path.endsWith("\\")||path.contains(":")
+            ||path.indexOf('\0')>=0)
+            throw new IllegalArgumentException("フォルダのパスが正しくありません");
+        for(String part:path.split("\\\\",-1)){
+            if(part.isEmpty()||part.equals(".")||part.equals(".."))
+                throw new IllegalArgumentException("フォルダのパスが正しくありません");
+        }
+        return path;
+    }
     private interface Task<T> { T run(DiskShare share) throws Exception; }
     private static <T> T connected(Settings cfg,Task<T> task) throws Exception {
         cfg.validate();

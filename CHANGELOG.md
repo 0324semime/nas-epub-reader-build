@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.0
+- Folder picker after SMB connection: directories and files displayed in a navigation list.
+- Breadcrumb-like path header, parent navigation, refresh and clear error states.
+- Select a directory as the reading root; save choice across launches.
+- Automatic EPUB search when the selected folder is saved; switching folder hides unrelated cached NAS books.
+- SMB share selection remains manual; no embedded Tailscale yet.
+
 ## v0.2.0
 - Add SMB2/SMB3 browsing of NAS shares using SMBJ.
 - Add editable NAS settings and password storage through Android KeyStore.

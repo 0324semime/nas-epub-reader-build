@@ -2,7 +2,16 @@
 
 Android EPUB bookshelf app with read-only SMB2/SMB3 network import.
 
-## v0.2 (cloud-built)
+## v0.3 (cloud-built)
+- Configure SMB host, share name, and credentials once. No need to type a subdirectory path.
+- Select **フォルダ選択** to open an interactive directory browser after authenticating.
+- Browse direct children inside the configured share, open nested directories and move to parent.
+- Select **このフォルダを読み取り先に設定** to persist the folder, then scan EPUB only inside that folder.
+- Browse files and folders, with EPUB indicators. Browser lists immediate children; EPUB scanning is still recursive (depth 5, up to 350 entries).
+- Switch selected folders without altering the NAS. Locally cached EPUB books from other SMB folders remain stored but are hidden from the current NAS library.
+- **Limitation:** Shares such as docker/personal_folder/rom still need to be entered by name in the NAS settings. Automatic enumeration of server-level share names is not included in v0.3.
+
+## v0.2
 - **NAS settings**: hostname/IP address, SMB share, optional subfolder, SMB user/password/domain.
 - SMB2/SMB3 enumeration, including EPUB files in nested folders (depth up to 5, max 350 files).
 - Tap a remote filename to download it into a local bookshelf and open the book.
