@@ -15,6 +15,8 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.content.ActivityNotFoundException;
 import android.widget.EditText;
 import android.text.InputType;
 import java.security.MessageDigest;
@@ -46,6 +48,7 @@ public final class MainActivity extends Activity {
     private final List<SmbRepository.RemoteBook> nasBooks = new ArrayList<>();
     private String nasStatus = "NASは未接続です";
     private volatile boolean nasBusy = false;
+    private boolean tailnetPanelVisible = false;
     private boolean folderBrowserVisible = false;
     private boolean folderBrowserLoading = false;
     private String folderBrowserPath = "";
@@ -58,6 +61,10 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         smbPreferences=new SecurePrefs(this);
         smbSettings=smbPreferences.load();
+        EmbeddedTailnet.initialize(this);
+        if(EmbeddedTailnet.enabled()){
+            new Thread(()->{try{EmbeddedTailnet.start();}catch(Throwable ignored){}},"tsnet-start").start();
+        }
         library = new File(getFilesDir(), "library");
         if (!library.exists()) library.mkdirs();
         fontSize = getPreferences(0).getInt("fontSize",100);
@@ -111,6 +118,7 @@ public final class MainActivity extends Activity {
     }
     private void shelf(){
         folderBrowserVisible=false;
+        tailnetPanelVisible=false;
         ++folderBrowserRevision;
         openedBook=null;openedFolder=null;screen();
         LinearLayout bar=layout(true);bar.setPadding(d(14),d(10),d(12),d(6));
@@ -118,7 +126,7 @@ public final class MainActivity extends Activity {
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         bar.addView(button("＋ EPUB追加",v->pick()));
         root.addView(bar);
-        TextView note=text("v0.3.1  /  EPUB解析修正版  /  Tailscaleは次期対応",12,false);
+        TextView note=text("v0.4  /  SMB・内蔵Tailscale（検証版）",12,false);
         note.setPadding(d(16),0,d(8),d(6));root.addView(note);
         LinearLayout smbBar=layout(true);
         smbBar.setPadding(d(8),0,d(8),d(4));
@@ -126,6 +134,11 @@ public final class MainActivity extends Activity {
         smbBar.addView(button("フォルダ選択",v->startFolderBrowser()));
         smbBar.addView(button("本棚更新",v->refreshNas()));
         root.addView(smbBar);
+        LinearLayout netBar=layout(true);netBar.setPadding(d(10),0,d(10),d(1));
+        netBar.addView(button("内蔵Tailscale設定",v->showTailnetPanel()));
+        TextView netState=text(EmbeddedTailnet.enabled()?"接続経路: 内蔵Tailscale":"接続経路: Wi-Fi / LAN",12,false);
+        netBar.addView(netState);
+        root.addView(netBar);
         TextView smbState=text(nasStatus,12,false);
         smbState.setPadding(d(16),0,d(12),d(6));
         root.addView(smbState);
@@ -548,6 +561,107 @@ public final class MainActivity extends Activity {
         },"smb-cover-sync").start();
     }
 
+
+    private void showTailnetPanel(){
+        tailnetPanelVisible=true;
+        screen();
+        LinearLayout header=layout(true);
+        header.setPadding(d(12),d(12),d(12),d(6));
+        header.addView(button("← 本棚",v->{tailnetPanelVisible=false;shelf();}));
+        TextView title=text("内蔵Tailscale",22,true);
+        title.setPadding(d(10),0,0,0);
+        header.addView(title);
+        root.addView(header);
+        ScrollView scroll=new ScrollView(this);
+        LinearLayout form=layout(false);
+        form.setPadding(d(18),d(10),d(18),d(16));
+        scroll.addView(form);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        TextView message=text("外出先からNASのSMBへ接続します。AndroidのVPN権限は使用しません。初回はTailscaleアカウントへのログインが必要です。",14,false);
+        form.addView(message);
+        CheckBox enabled=new CheckBox(this);
+        enabled.setText("SMB接続に内蔵Tailscaleを使用");
+        enabled.setChecked(EmbeddedTailnet.enabled());
+        form.addView(enabled);
+        TextView hint=text("Tailscale側のNASアドレス（100.x.x.x または xxxx.ts.net）。LAN IPを使う場合はサブネットルーターが必要です。",12,false);
+        hint.setPadding(0,d(10),0,0);
+        form.addView(hint);
+        EditText target=settingField("NASのTailscaleアドレス",EmbeddedTailnet.target(smbSettings.host),InputType.TYPE_CLASS_TEXT);
+        form.addView(target);
+        TextView state=text("Tailscale状態: "+tailnetPhaseText(),13,false);
+        state.setPadding(0,d(14),0,d(10));
+        form.addView(state);
+        form.addView(button("設定を保存",v->{
+            try{
+                EmbeddedTailnet.setSettings(enabled.isChecked(),target.getText().toString());
+                nasBooks.clear();
+                nasStatus="通信経路を変更しました。本棚更新を押してください。";
+                Toast.makeText(this,"Tailscale設定を保存しました",Toast.LENGTH_SHORT).show();
+                state.setText("Tailscale状態: "+tailnetPhaseText());
+            }catch(Throwable e){
+                new AlertDialog.Builder(this).setTitle("設定を保存できません")
+                    .setMessage(friendlyThrowable(e)).setPositiveButton("閉じる",null).show();
+            }
+        }));
+        form.addView(button("Tailscaleを起動 / 再確認",v->{
+            state.setText("Tailscaleを起動しています…");
+            new Thread(()->{
+                try{
+                    String result=EmbeddedTailnet.start();
+                    runOnUiThread(()->state.setText("起動結果: "+result+"\n"+tailnetPhaseText()));
+                }catch(Throwable e){
+                    runOnUiThread(()->state.setText("起動失敗: "+friendlyThrowable(e)));
+                }
+            },"tsnet-user-start").start();
+        }));
+        form.addView(button("接続状態を更新",v->state.setText("Tailscale状態: "+tailnetPhaseText())));
+        form.addView(button("ログインURLを開く",v->{
+            String url=EmbeddedTailnet.loginUrl();
+            if(!url.startsWith("https://login.tailscale.com/")){
+                new AlertDialog.Builder(this).setTitle("ログインURLがありません")
+                  .setMessage("起動ボタンを押してから「接続状態を更新」を押してください。\n"+
+                     "状態: "+tailnetPhaseText())
+                  .setPositiveButton("閉じる",null).show();
+                return;
+            }
+            try{
+                startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));
+            }catch(ActivityNotFoundException e){
+                new AlertDialog.Builder(this).setMessage(url).setPositiveButton("閉じる",null).show();
+            }
+        }));
+        form.addView(button("Tailscaleを停止",v->{
+            state.setText("停止しています…");
+            new Thread(()->{
+                try{
+                    String result=EmbeddedTailnet.stop();
+                    runOnUiThread(()->state.setText("停止結果: "+result));
+                }catch(Throwable e){
+                    runOnUiThread(()->state.setText("停止失敗: "+friendlyThrowable(e)));
+                }
+            },"tsnet-stop").start();
+        }));
+        TextView footnote=text("重要: Tailscale接続が確認できた後、本棚に戻り「本棚更新」を押してください。NASのSMBユーザー名・パスワードは今までどおり使用します。",13,false);
+        footnote.setPadding(0,d(16),0,d(8));
+        form.addView(footnote);
+    }
+    private String tailnetPhaseText(){
+        try{
+            JSONObject status=new JSONObject(EmbeddedTailnet.status());
+            String phase=status.optString("phase","unknown");
+            String address=status.optString("ip","");
+            String error=status.optString("error","");
+            String login=status.optString("login_url","");
+            return phase+(address.isEmpty()?"":" / "+address)
+                +(error.isEmpty()?"":" / "+error)
+                +(login.isEmpty()?"":"\nログインURL: "+login);
+        }catch(Exception e){return "状態の取得に失敗しました";}
+    }
+    private String friendlyThrowable(Throwable e){
+        if(e.getMessage()!=null&&!e.getMessage().isEmpty())return e.getMessage();
+        return e.getClass().getSimpleName();
+    }
+
     private void pick(){
         Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");
@@ -660,7 +774,8 @@ public final class MainActivity extends Activity {
         file.delete();
     }
     @Override public void onBackPressed(){
-        if(folderBrowserVisible){
+        if(tailnetPanelVisible){tailnetPanelVisible=false;shelf();}
+        else if(folderBrowserVisible){
             if(folderBrowserPath.isEmpty())leaveBrowser();
             else loadFolder(parentFolder(folderBrowserPath));
         }else if(openedBook!=null)shelf();

@@ -99,8 +99,11 @@ public final class SmbRepository {
     private interface Task<T> { T run(DiskShare share) throws Exception; }
     private static <T> T connected(Settings cfg,Task<T> task) throws Exception {
         cfg.validate();
+        boolean tailnet=EmbeddedTailnet.enabled();
+        int port=tailnet ? EmbeddedTailnet.tunnelPort(cfg.host.trim()) : 445;
+        String endpoint=tailnet ? "127.0.0.1" : cfg.host.trim();
         try(SMBClient client=new SMBClient();
-            Connection connection=client.connect(cfg.host.trim())) {
+            Connection connection=client.connect(endpoint,port)) {
             AuthenticationContext context=new AuthenticationContext(cfg.user,cfg.password.toCharArray(),cfg.domain);
             Session session=connection.authenticate(context);
             try(DiskShare share=(DiskShare)session.connectShare(cfg.share.trim())){

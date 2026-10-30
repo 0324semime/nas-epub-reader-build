@@ -1,25 +1,22 @@
 plugins {
     id 'com.android.application'
 }
-
 android {
     namespace 'com.semime.nasepub'
     compileSdk 35
-
     defaultConfig {
         applicationId 'com.semime.nasepub'
         minSdk 26
         targetSdk 34
-        versionCode 4
-        versionName '0.3.1'
+        versionCode 5
+        versionName '0.4.0'
     }
-
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
 }
-
 dependencies {
     implementation 'com.hierynomus:smbj:0.15.0'
+    implementation files('libs/tsbridge.aar')
 }
