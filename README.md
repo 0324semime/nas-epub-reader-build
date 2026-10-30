@@ -1,27 +1,30 @@
-# NAS EPUB Reader (Android)
+# NAS EPUB Reader for Android
 
-Experimental Android EPUB reader, built in the cloud using GitHub Actions.
+Android EPUB bookshelf app with read-only SMB2/SMB3 network import.
 
-## v0.1
-- Import an EPUB using Android's document picker
-- Extract title, author and (when included) cover from EPUB2/EPUB3
-- Display a cover-based library; tap to start reading
-- Read chapters in WebView, change text size, resume the last chapter
-- Long-press a book to delete its local copy
+## v0.2 (cloud-built)
+- **NAS settings**: hostname/IP address, SMB share, optional subfolder, SMB user/password/domain.
+- SMB2/SMB3 enumeration, including EPUB files in nested folders (depth up to 5, max 350 files).
+- Tap a remote filename to download it into a local bookshelf and open the book.
+- Fetch up to 12 missing EPUB covers at a time by pressing the cover sync button. Network EPUB files are downloaded and cached on the device; there is no direct streaming EPUB view.
+- Local bookshelf displays EPUB covers, titles, authors; tap to read chapters; text zoom and chapter-level resume.
+- Password is encrypted by AndroidKeyStore AES-GCM and stays on-device. No credentials or private hostnames are embedded in the public source.
+- No remote write/delete calls (read-only SMB usage).
 
-## Planned
-- SMB access to UGREEN NAS shared folders
-- Built-in Tailscale connection
-- AYN Thor dual-screen optimization
+## Known limitations
+- Embedded Tailscale is **not yet implemented**. LAN-only at present; external connectivity requires separate Tailscale or a different reachable private network.
+- AYN Thor dual-screen layout and complete vertical-text rendering are not yet optimized.
+- EPUB books up to 150 MB; no DRM support. EPUB extraction can take storage.
+- When a NAS EPUB changes, its cached local copy is not automatically refreshed yet.
+- First use requires entering the SMB share name and credentials; host IP is pre-filled as an editable example.
+- Complex EPUB layouts should be tested on physical devices.
 
-**This first build is LOCAL-ONLY.** It does not yet support SMB or Tailscale.
+## Download an APK
+Go to Actions > Build Android APK > latest successful run > Artifacts > NAS-EPUB-Reader-debug-APK, extract app-debug.apk and install on Android.
 
-## Download APK
-Open Actions > Build Android APK > the newest successful run > Artifacts > NAS-EPUB-Reader-debug-APK.
-Download the artifact ZIP and extract app-debug.apk.
-
-Sources are published without NAS passwords, Tailscale keys or other private credentials.
-
-## Build locally
-Requires JDK 17, Android SDK 35 and Gradle 8.10.2.
+## Build
+Requires Android SDK 35 and JDK 17. The GitHub Actions build uses Gradle 8.10.2 and Android Gradle Plugin 8.7.3.
 Run: gradle :app:assembleDebug
+
+## Source code
+Public code must never include secrets, NAS share credentials, Firebase files, Tailscale auth keys or other private data.

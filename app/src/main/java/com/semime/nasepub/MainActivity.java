@@ -15,6 +15,10 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.EditText;
+import android.text.InputType;
+import java.security.MessageDigest;
+import java.util.Locale;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -37,9 +41,16 @@ public final class MainActivity extends Activity {
     private WebView reader;
     private int chapter = 0;
     private int fontSize = 100;
+    private SecurePrefs smbPreferences;
+    private SmbRepository.Settings smbSettings;
+    private final List<SmbRepository.RemoteBook> nasBooks = new ArrayList<>();
+    private String nasStatus = "NASは未接続です";
+    private volatile boolean nasBusy = false;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        smbPreferences=new SecurePrefs(this);
+        smbSettings=smbPreferences.load();
         library = new File(getFilesDir(), "library");
         if (!library.exists()) library.mkdirs();
         fontSize = getPreferences(0).getInt("fontSize",100);
@@ -90,10 +101,20 @@ public final class MainActivity extends Activity {
         bar.addView(button("＋ EPUB追加",v->pick()));
         root.addView(bar);
         TextView note=text("ローカル読書版 v0.1  /  SMB・Tailscaleは次期対応",12,false);
-        note.setPadding(d(16),0,d(8),d(12));root.addView(note);
+        note.setText("v0.2  /  SMB2・SMB3対応  /  Tailscaleは未実装");
+        note.setPadding(d(16),0,d(8),d(6));root.addView(note);
+        LinearLayout smbBar=layout(true);
+        smbBar.setPadding(d(8),0,d(8),d(4));
+        smbBar.addView(button("NAS設定",v->showSmbSettings()));
+        smbBar.addView(button("NAS更新",v->refreshNas()));
+        root.addView(smbBar);
+        TextView smbState=text(nasStatus,12,false);
+        smbState.setPadding(d(16),0,d(12),d(6));
+        root.addView(smbState);
         ScrollView scroll=new ScrollView(this);
         LinearLayout list=layout(false);list.setPadding(d(12),0,d(12),d(20));
         scroll.addView(list);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        renderRemoteBooks(list);
         List<JSONObject> books=readBooks();
         if(books.isEmpty()){
             TextView empty=text("まだ本がありません。\n「＋ EPUB追加」からEPUBを選択してください。",16,false);
@@ -134,6 +155,198 @@ public final class MainActivity extends Activity {
             }
         }
     }
+
+    private String remoteId(String filePath){
+        try{
+            MessageDigest md=MessageDigest.getInstance("SHA-256");
+            String key=smbSettings.host+"|"+smbSettings.share+"|"+filePath;
+            byte[] bytes=md.digest(key.getBytes(StandardCharsets.UTF_8));
+            StringBuilder b=new StringBuilder("nas-");
+            for(int i=0;i<12;i++)b.append(String.format(Locale.ROOT,"%02x",bytes[i]&255));
+            return b.toString();
+        }catch(Exception e){return "nas-fallback";}
+    }
+    private JSONObject cachedRemote(SmbRepository.RemoteBook remote){
+        try {
+            String id=remoteId(remote.path);
+            File metadata=new File(new File(library,id),"book.json");
+            if(!metadata.isFile())return null;
+            JSONObject obj=new JSONObject(new String(readFile(metadata,500000),StandardCharsets.UTF_8));
+            return id.equals(obj.optString("id"))?obj:null;
+        }catch(Exception e){return null;}
+    }
+    private void renderRemoteBooks(LinearLayout list){
+        if(nasBooks.isEmpty())return;
+        int missing=0;
+        for(SmbRepository.RemoteBook item:nasBooks)if(cachedRemote(item)==null)missing++;
+        TextView section=text("NAS の本（未取得 "+missing+"冊）",17,true);
+        section.setPadding(d(6),d(8),d(6),d(3));list.addView(section);
+        TextView help=text("表紙を一括取得するか、題名をタップして取り込んでください。",12,false);
+        list.addView(help);
+        list.addView(button("表紙を取得（最大12冊ずつ）",v->syncNasCovers()));
+        int shown=0;
+        for(SmbRepository.RemoteBook item:nasBooks){
+            if(cachedRemote(item)!=null)continue;
+            if(shown++>=120){
+                list.addView(text("ほかのファイルもあります。検索範囲を絞ってください。",12,false));
+                break;
+            }
+            TextView entry=text("  ↓  "+item.name,14,false);
+            entry.setPadding(d(6),d(11),d(6),d(11));
+            entry.setOnClickListener(v->fetchAndOpen(item));
+            list.addView(entry);
+        }
+        if(shown>0){
+            TextView heading=text("読み込んだ本",17,true);
+            heading.setPadding(d(6),d(14),d(4),d(6));
+            list.addView(heading);
+        }
+    }
+    private EditText settingField(String hint,String value,int type){
+        EditText field=new EditText(this);
+        field.setSingleLine(true);
+        field.setTextSize(15);
+        field.setHint(hint);
+        field.setInputType(type);
+        field.setText(value);
+        return field;
+    }
+    private void showSmbSettings(){
+        ScrollView view=new ScrollView(this);
+        LinearLayout columns=layout(false);
+        columns.setPadding(d(16),d(10),d(16),d(10));
+        view.addView(columns);
+        EditText host=settingField("NASのIPアドレス / ホスト名",smbSettings.host,InputType.TYPE_CLASS_TEXT);
+        EditText share=settingField("SMB共有フォルダ名（例: Books）",smbSettings.share,InputType.TYPE_CLASS_TEXT);
+        EditText folder=settingField("共有内サブフォルダ（任意）",smbSettings.folder,InputType.TYPE_CLASS_TEXT);
+        EditText user=settingField("SMBユーザー名",smbSettings.user,InputType.TYPE_CLASS_TEXT);
+        EditText pass=settingField("SMBパスワード",smbSettings.password,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        EditText domain=settingField("ドメイン（通常は空欄）",smbSettings.domain,InputType.TYPE_CLASS_TEXT);
+        for(EditText f:new EditText[]{host,share,folder,user,pass,domain})columns.addView(f);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle("NAS接続設定（SMB2/3）")
+            .setView(view)
+            .setNegativeButton("キャンセル",null)
+            .setPositiveButton("保存して接続",null)
+            .create();
+        dialog.setOnShowListener(a->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            SmbRepository.Settings next=new SmbRepository.Settings();
+            next.host=host.getText().toString().trim();
+            next.share=share.getText().toString().trim();
+            next.folder=folder.getText().toString().trim();
+            next.user=user.getText().toString();
+            next.password=pass.getText().toString();
+            next.domain=domain.getText().toString();
+            try{
+                next.validate();
+                smbPreferences.save(next);
+                smbSettings=next;
+                nasBooks.clear();
+                dialog.dismiss();
+                refreshNas();
+            }catch(Exception e){
+                new AlertDialog.Builder(this).setTitle("設定エラー").setMessage(e.getMessage()).setPositiveButton("閉じる",null).show();
+            }
+        }));
+        dialog.show();
+    }
+    private void refreshNas(){
+        if(nasBusy)return;
+        SmbRepository.Settings cfg=smbSettings.copy();
+        try{cfg.validate();}catch(Exception e){showSmbSettings();return;}
+        nasBusy=true;nasStatus="NASへ接続しています…";shelf();
+        new Thread(()->{
+            try{
+                List<SmbRepository.RemoteBook> results=SmbRepository.list(cfg);
+                results.sort(Comparator.comparing(x->x.name.toLowerCase(Locale.ROOT)));
+                runOnUiThread(()->{
+                    nasBooks.clear();nasBooks.addAll(results);
+                    nasStatus="NAS接続成功: EPUB "+results.size()+"冊";
+                    nasBusy=false;shelf();
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    nasStatus="接続失敗: "+friendly(e);nasBusy=false;shelf();
+                });
+            }
+        },"smb-list").start();
+    }
+    private String friendly(Exception e){
+        String message=e.getMessage();
+        if(message==null||message.trim().isEmpty())message=e.getClass().getSimpleName();
+        if(message.length()>170)message=message.substring(0,170);
+        return message;
+    }
+    private JSONObject fetchRemote(SmbRepository.Settings cfg,SmbRepository.RemoteBook item) throws Exception {
+        String id=remoteId(item.path);
+        JSONObject cached=cachedRemote(item);
+        if(cached!=null)return cached;
+        File dir=new File(library,id);
+        File temp=new File(getCacheDir(),"nas-"+id+".epub");
+        try{
+            SmbRepository.download(cfg,item.path,temp,150L*1024*1024);
+            EpubParser.BookInfo info=EpubParser.extractAndParse(temp,dir);
+            JSONObject obj=new JSONObject();
+            obj.put("id",id);obj.put("title",info.title);
+            obj.put("author",info.author);obj.put("cover",info.cover);
+            obj.put("source",item.path);
+            JSONArray pages=new JSONArray();
+            for(String chapter:info.chapters)pages.put(chapter);
+            obj.put("chapters",pages);
+            try(FileOutputStream out=new FileOutputStream(new File(dir,"book.json"))){
+                out.write(obj.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            return obj;
+        }catch(Exception e){
+            delete(dir);
+            throw e;
+        }finally{temp.delete();}
+    }
+    private void fetchAndOpen(SmbRepository.RemoteBook item){
+        if(nasBusy)return;
+        SmbRepository.Settings cfg=smbSettings.copy();
+        nasBusy=true;nasStatus="EPUBを取得中: "+item.name;shelf();
+        new Thread(()->{
+            try{
+                JSONObject book=fetchRemote(cfg,item);
+                runOnUiThread(()->{
+                    nasBusy=false;nasStatus="読書できます: "+item.name;
+                    open(book);
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    nasBusy=false;nasStatus="取得失敗: "+friendly(e);
+                    shelf();
+                    new AlertDialog.Builder(this).setTitle("EPUB取得失敗")
+                        .setMessage(friendly(e)).setPositiveButton("閉じる",null).show();
+                });
+            }
+        },"smb-download").start();
+    }
+    private void syncNasCovers(){
+        if(nasBusy)return;
+        SmbRepository.Settings cfg=smbSettings.copy();
+        List<SmbRepository.RemoteBook> queue=new ArrayList<>();
+        for(SmbRepository.RemoteBook item:nasBooks){
+            if(cachedRemote(item)==null && queue.size()<12)queue.add(item);
+        }
+        if(queue.isEmpty()){Toast.makeText(this,"すべて取り込み済みです",Toast.LENGTH_SHORT).show();return;}
+        nasBusy=true;nasStatus="EPUBの表紙を取得中…";shelf();
+        new Thread(()->{
+            int ok=0,fail=0;
+            for(SmbRepository.RemoteBook item:queue){
+                try{fetchRemote(cfg,item);ok++;}
+                catch(Exception e){fail++;}
+            }
+            final int success=ok,errors=fail;
+            runOnUiThread(()->{
+                nasBusy=false;
+                nasStatus="表紙取得: "+success+"冊成功・"+errors+"冊失敗";
+                shelf();
+            });
+        },"smb-cover-sync").start();
+    }
+
     private void pick(){
         Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");
