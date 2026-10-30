@@ -520,9 +520,21 @@ public final class MainActivity extends Activity {
         String result=detail.toString();
         return result.length()>4500?result.substring(0,4500):result;
     }
+    /** Do not copy the Tailscale authorization/login URL to diagnostic reports. */
+    private String safeTailnetDiagnostic(){
+        try{
+            JSONObject data=new JSONObject(EmbeddedTailnet.status());
+            return "phase="+data.optString("phase","unknown")
+                +", target="+data.optString("target","")
+                +", sessions="+data.optLong("tunnel_sessions",0)
+                +", received="+data.optLong("bytes_from_nas",0)
+                +", sent="+data.optLong("bytes_to_nas",0)
+                +", lastError="+data.optString("last_tunnel_error","");
+        }catch(Exception ex){return "状態の取得に失敗";}
+    }
     private void showTransferError(String headline,Throwable e){
         String details="通信経路: "+EmbeddedTailnet.routeDescription(smbSettings.host)
-            +"\nTailscale状態: "+EmbeddedTailnet.status()
+            +"\nTailscale状態: "+safeTailnetDiagnostic()
             +"\n\n"+exceptionDetails(e);
         new AlertDialog.Builder(this).setTitle(headline)
             .setMessage(details)
