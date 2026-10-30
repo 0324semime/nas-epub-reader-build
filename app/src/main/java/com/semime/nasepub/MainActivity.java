@@ -126,7 +126,7 @@ public final class MainActivity extends Activity {
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         bar.addView(button("＋ EPUB追加",v->pick()));
         root.addView(bar);
-        TextView note=text("v0.4  /  SMB・内蔵Tailscale（検証版）",12,false);
+        TextView note=text("v0.4.1  /  Tailscale通信診断",12,false);
         note.setPadding(d(16),0,d(8),d(6));root.addView(note);
         LinearLayout smbBar=layout(true);
         smbBar.setPadding(d(8),0,d(8),d(4));
@@ -136,7 +136,7 @@ public final class MainActivity extends Activity {
         root.addView(smbBar);
         LinearLayout netBar=layout(true);netBar.setPadding(d(10),0,d(10),d(1));
         netBar.addView(button("内蔵Tailscale設定",v->showTailnetPanel()));
-        TextView netState=text(EmbeddedTailnet.enabled()?"接続経路: 内蔵Tailscale":"接続経路: Wi-Fi / LAN",12,false);
+        TextView netState=text("接続経路: "+EmbeddedTailnet.routeDescription(smbSettings.host),12,false);
         netBar.addView(netState);
         root.addView(netBar);
         TextView smbState=text(nasStatus,12,false);
@@ -360,6 +360,9 @@ public final class MainActivity extends Activity {
         address.setPadding(d(6),d(9),d(6),d(3));
         header.addView(address);
         root.addView(header);
+        TextView routeInfo=text("実際のSMB通信経路: "+EmbeddedTailnet.routeDescription(smbSettings.host),12,true);
+        routeInfo.setPadding(d(14),d(8),d(12),d(8));
+        root.addView(routeInfo);
 
         ScrollView scroll=new ScrollView(this);
         LinearLayout list=layout(false);
@@ -588,23 +591,16 @@ public final class MainActivity extends Activity {
         form.addView(hint);
         EditText target=settingField("NASのTailscaleアドレス",EmbeddedTailnet.target(smbSettings.host),InputType.TYPE_CLASS_TEXT);
         form.addView(target);
-        TextView state=text("Tailscale状態: "+tailnetPhaseText(),13,false);
+        TextView state=text("保存済み経路: "+EmbeddedTailnet.routeDescription(smbSettings.host)+"\nTailscale状態: "+tailnetPhaseText(),13,false);
         state.setPadding(0,d(14),0,d(10));
         form.addView(state);
-        form.addView(button("設定を保存",v->{
-            try{
-                EmbeddedTailnet.setSettings(enabled.isChecked(),target.getText().toString());
-                nasBooks.clear();
-                nasStatus="通信経路を変更しました。本棚更新を押してください。";
-                Toast.makeText(this,"Tailscale設定を保存しました",Toast.LENGTH_SHORT).show();
-                state.setText("Tailscale状態: "+tailnetPhaseText());
-            }catch(Throwable e){
-                new AlertDialog.Builder(this).setTitle("設定を保存できません")
-                    .setMessage(friendlyThrowable(e)).setPositiveButton("閉じる",null).show();
-            }
-        }));
+        enabled.setOnCheckedChangeListener((buttonView,isChecked)->
+            state.setText("未保存の変更があります。保存後の通信経路を確認してください。\n"
+                +"現在の保存済み経路: "+EmbeddedTailnet.routeDescription(smbSettings.host)));
+        form.addView(button("設定を保存",v->saveTailnetUi(enabled,target,state)));
         form.addView(button("Tailscaleを起動 / 再確認",v->{
-            state.setText("Tailscaleを起動しています…");
+            if(!saveTailnetUi(enabled,target,state))return;
+            state.setText("設定保存済み。Tailscaleを起動しています…");
             new Thread(()->{
                 try{
                     String result=EmbeddedTailnet.start();
@@ -614,7 +610,34 @@ public final class MainActivity extends Activity {
                 }
             },"tsnet-user-start").start();
         }));
-        form.addView(button("接続状態を更新",v->state.setText("Tailscale状態: "+tailnetPhaseText())));
+        form.addView(button("接続状態を更新",v->state.setText(
+            "保存済み経路: "+EmbeddedTailnet.routeDescription(smbSettings.host)
+            +"\nTailscale状態: "+tailnetPhaseText())));
+        form.addView(button("NASのSMB接続を診断（445番）",v->{
+            if(!saveTailnetUi(enabled,target,state))return;
+            if(!EmbeddedTailnet.enabled()){
+                state.setText("現在は直接LAN接続です。チェックを有効にすると内蔵Tailscale経由の診断ができます。");
+                return;
+            }
+            state.setText("Tailscale → "+EmbeddedTailnet.target(smbSettings.host)+" のTCP 445番を確認中…");
+            final String host=EmbeddedTailnet.target(smbSettings.host);
+            new Thread(()->{
+                try{
+                    String raw=EmbeddedTailnet.probeSmb(host);
+                    JSONObject obj=new JSONObject(raw);
+                    final String outcome=obj.optBoolean("ok",false)?"成功：":"失敗：";
+                    final String detail=obj.optString("detail","応答がありません");
+                    runOnUiThread(()->{
+                        if(tailnetPanelVisible)state.setText(outcome+detail
+                            +"\n保存済み経路: "+EmbeddedTailnet.routeDescription(smbSettings.host));
+                    });
+                }catch(Throwable e){
+                    runOnUiThread(()->{
+                        if(tailnetPanelVisible)state.setText("診断エラー: "+friendlyThrowable(e));
+                    });
+                }
+            },"tsnet-smb-diagnostic").start();
+        }));
         form.addView(button("ログインURLを開く",v->{
             String url=EmbeddedTailnet.loginUrl();
             if(!url.startsWith("https://login.tailscale.com/")){
@@ -644,6 +667,19 @@ public final class MainActivity extends Activity {
         TextView footnote=text("重要: Tailscale接続が確認できた後、本棚に戻り「本棚更新」を押してください。NASのSMBユーザー名・パスワードは今までどおり使用します。",13,false);
         footnote.setPadding(0,d(16),0,d(8));
         form.addView(footnote);
+    }
+    private boolean saveTailnetUi(CheckBox enabled,EditText target,TextView state){
+        try{
+            EmbeddedTailnet.setSettings(enabled.isChecked(),target.getText().toString().trim());
+            nasBooks.clear();
+            nasStatus="通信経路を保存しました。NASの本棚を更新してください。";
+            state.setText("保存完了: "+EmbeddedTailnet.routeDescription(smbSettings.host)
+                +"\nTailscale状態: "+tailnetPhaseText());
+            return true;
+        }catch(Throwable e){
+            state.setText("保存に失敗しました: "+friendlyThrowable(e));
+            return false;
+        }
     }
     private String tailnetPhaseText(){
         try{

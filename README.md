@@ -1,4 +1,15 @@
-# NAS EPUB Reader — v0.4 embedded Tailscale preview
+# NAS EPUB Reader — v0.4.1 embedded Tailscale connectivity diagnostic
+
+## Fixes in v0.4.1
+- Explicitly display the saved SMB connection route on both bookshelf and folder selection screens.
+- A checked but unsaved Tailscale checkbox no longer silently appears to activate the tunnel: UI warns "未保存".
+- Pressing the Tailscale start button automatically saves the checkbox state and NAS tailnet destination.
+- Add a separate diagnostic action that uses the Go tsnet node to open a TCP connection to the target NAS port 445.
+- The error "failed to connect to /100.x.x.x (port 445) from /10.x.x.x" indicates the **direct** SMB route was used, not the embedded loopback tunnel.
+- Keep LAN SMB settings separate from Tailscale target: LAN host 192.168.3.4, Tailscale target 100.64.209.92 (verify this is your NAS device).
+- For real Tailscale SMB failures, the new probe reports whether port 445 is reachable before SMB user authentication.
+
+## Previous release: v0.4 embedded Tailscale preview
 ## What works
 - Local SMB2/3 browsing and EPUB extraction from previous releases
 - Android Java SMBJ connects through Go tsnet's app-local 127.0.0.1-only TCP/445 relay when embedded mode is enabled

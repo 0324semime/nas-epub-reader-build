@@ -47,6 +47,16 @@ public final class EmbeddedTailnet {
         catch(Exception e){return "";}
     }
     public static String stop(){return Tsbridge.stop();}
+    /** Diagnostic: first verifies tsnet connection, then NAS TCP port 445. */
+    public static String probeSmb(String host){
+        if(!Tsbridge.validateTarget(host))
+            return "{\"ok\":false,\"detail\":\"接続先アドレスが正しくありません\"}";
+        return Tsbridge.probeSmb(host);
+    }
+    public static String routeDescription(String localHost){
+        if(!enabled())return "Wi-Fi / LAN (直接)";
+        return "内蔵Tailscale → "+target(localHost)+" :445";
+    }
     /**
      * Must run on a background thread. Returns a local port bound to 127.0.0.1.
      * Tailscale performs only network transit; SMBJ still authenticates to NAS.

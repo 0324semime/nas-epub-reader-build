@@ -153,6 +153,34 @@ func validTarget(host string)bool {
 }
 func ValidateTarget(host string)bool {return validTarget(host)}
 
+// ProbeSmb confirms that the embedded tailnet node can establish a real TCP
+// connection to the target NAS on port 445. It does not authenticate via SMB.
+func ProbeSmb(host string) string {
+    host=strings.TrimSpace(host)
+    type report struct {
+        OK bool `json:"ok"`
+        Target string `json:"target"`
+        Detail string `json:"detail"`
+    }
+    encode:=func(ok bool,detail string)string{
+        data,_:=json.Marshal(report{OK:ok,Target:host,Detail:detail})
+        return string(data)
+    }
+    if !validTarget(host){return encode(false,"Invalid tailnet target address")}
+    shared.Lock()
+    srv,phase:=shared.server,shared.status.Phase
+    shared.Unlock()
+    if srv==nil||phase!="connected" {
+        return encode(false,"Embedded Tailscale is not connected (phase="+phase+")")
+    }
+    ctx,cancel:=context.WithTimeout(context.Background(),8*time.Second)
+    defer cancel()
+    conn,err:=srv.Dial(ctx,"tcp",net.JoinHostPort(host,"445"))
+    if err!=nil{return encode(false,"Tailscale to SMB port 445: "+err.Error())}
+    conn.Close()
+    return encode(true,"Embedded Tailscale to NAS port 445: TCP connected")
+}
+
 // StartSmbTunnel opens a 127.0.0.1-only proxy to NAS TCP port 445 over
 // this embedded Tailscale connection. Returned port is passed to SMBJ.
 // All connections require the ordinary SMB username/password authentication.
