@@ -118,7 +118,7 @@ public final class MainActivity extends Activity {
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         bar.addView(button("＋ EPUB追加",v->pick()));
         root.addView(bar);
-        TextView note=text("v0.3  /  NASフォルダ選択  /  Tailscaleは次期対応",12,false);
+        TextView note=text("v0.3.1  /  EPUB解析修正版  /  Tailscaleは次期対応",12,false);
         note.setPadding(d(16),0,d(8),d(6));root.addView(note);
         LinearLayout smbBar=layout(true);
         smbBar.setPadding(d(8),0,d(8),d(4));

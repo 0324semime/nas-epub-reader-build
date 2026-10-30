@@ -2,6 +2,14 @@
 
 Android EPUB bookshelf app with read-only SMB2/SMB3 network import.
 
+## v0.3.1 (EPUB XML compatibility fix)
+- Replaced desktop-JDK-specific XML parser configuration with Android XmlPullParser for EPUB container.xml and OPF manifest.
+- Preserved book metadata extraction, cover recognition, chapter ordering, and limited safe ZIP extraction.
+- Rejects DTD declarations and nonstandard XML entities, preventing external entity processing.
+- Fix targets the Android error `http://apache.org/xml/features/disallow-doctype-decl` after a successful SMB EPUB file listing.
+- The fix is source/build verified; real-device EPUB decoding must still be verified.
+- Note: current CI debug signing keys are ephemeral. If Android rejects an upgrade, uninstall the old debug build first. This resets cached books and SMB settings.
+
 ## v0.3 (cloud-built)
 - Configure SMB host, share name, and credentials once. No need to type a subdirectory path.
 - Select **フォルダ選択** to open an interactive directory browser after authenticating.

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.1
+- Fix EPUB import crashing on unsupported Android DocumentBuilderFactory XML security features.
+- Use Android-native XmlPullParser to parse EPUB container and OPF metadata.
+- Restrict XML event counts/size and reject DTDs and unsupported entities.
+- Keep SMB browser, selected folder, and the EPUB library UI unchanged.
+
 ## v0.3.0
 - Folder picker after SMB connection: directories and files displayed in a navigation list.
 - Breadcrumb-like path header, parent navigation, refresh and clear error states.
