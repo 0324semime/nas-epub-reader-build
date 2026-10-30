@@ -3,6 +3,9 @@ package com.semime.nasepub;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -48,6 +51,7 @@ public final class MainActivity extends Activity {
     private final List<SmbRepository.RemoteBook> nasBooks = new ArrayList<>();
     private String nasStatus = "NASは未接続です";
     private volatile boolean nasBusy = false;
+    private TextView nasStatusView;
     private boolean tailnetPanelVisible = false;
     private boolean folderBrowserVisible = false;
     private boolean folderBrowserLoading = false;
@@ -126,7 +130,7 @@ public final class MainActivity extends Activity {
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         bar.addView(button("＋ EPUB追加",v->pick()));
         root.addView(bar);
-        TextView note=text("v0.4.1  /  Tailscale通信診断",12,false);
+        TextView note=text("v0.4.2  /  SMB転送診断",12,false);
         note.setPadding(d(16),0,d(8),d(6));root.addView(note);
         LinearLayout smbBar=layout(true);
         smbBar.setPadding(d(8),0,d(8),d(4));
@@ -142,6 +146,7 @@ public final class MainActivity extends Activity {
         TextView smbState=text(nasStatus,12,false);
         smbState.setPadding(d(16),0,d(12),d(6));
         root.addView(smbState);
+        nasStatusView=smbState;
         TextView selected=text(smbPreferences.hasFolderSelection()
           ? "📁 読み取り先: " + smbSettings.share
             + (smbSettings.folder.isEmpty() ? " （共有の直下）" : "\\" + smbSettings.folder)
@@ -494,6 +499,40 @@ public final class MainActivity extends Activity {
         if(message.length()>170)message=message.substring(0,170);
         return message;
     }
+    private void reportTransfer(String message){
+        runOnUiThread(()->{
+            if(!nasBusy)return;
+            nasStatus=message;
+            if(nasStatusView!=null)nasStatusView.setText(message);
+        });
+    }
+    private String exceptionDetails(Throwable e){
+        StringBuilder detail=new StringBuilder();
+        int depth=0;
+        while(e!=null && depth<7){
+            if(depth>0)detail.append("\n原因").append(depth).append(": ");
+            detail.append(e.getClass().getSimpleName());
+            String m=e.getMessage();
+            if(m!=null && !m.trim().isEmpty())detail.append(": ").append(m);
+            e=e.getCause();depth++;
+            if(e!=null)detail.append("\n");
+        }
+        String result=detail.toString();
+        return result.length()>4500?result.substring(0,4500):result;
+    }
+    private void showTransferError(String headline,Throwable e){
+        String details="通信経路: "+EmbeddedTailnet.routeDescription(smbSettings.host)
+            +"\nTailscale状態: "+EmbeddedTailnet.status()
+            +"\n\n"+exceptionDetails(e);
+        new AlertDialog.Builder(this).setTitle(headline)
+            .setMessage(details)
+            .setPositiveButton("閉じる",null)
+            .setNeutralButton("診断内容をコピー",(dialog,which)->{
+                ClipboardManager clipboard=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+                if(clipboard!=null)clipboard.setPrimaryClip(
+                    ClipData.newPlainText("NAS EPUB Reader診断",details));
+            }).show();
+    }
     private JSONObject fetchRemote(SmbRepository.Settings cfg,SmbRepository.RemoteBook item) throws Exception {
         String id=remoteId(item.path);
         JSONObject cached=cachedRemote(item);
@@ -501,7 +540,12 @@ public final class MainActivity extends Activity {
         File dir=new File(library,id);
         File temp=new File(getCacheDir(),"nas-"+id+".epub");
         try{
-            SmbRepository.download(cfg,item.path,temp,150L*1024*1024);
+            reportTransfer("SMBからEPUBを取得中: "+item.name+"（0 KB）");
+            SmbRepository.download(cfg,item.path,temp,150L*1024*1024,
+                bytes->reportTransfer("SMBからEPUBを取得中: "+item.name
+                    +"（"+(bytes/1024L)+" KB）"));
+            reportTransfer("転送完了。EPUBを解析中: "+item.name
+                +"（"+(temp.length()/1024L)+" KB）");
             EpubParser.BookInfo info=EpubParser.extractAndParse(temp,dir);
             JSONObject obj=new JSONObject();
             obj.put("id",id);obj.put("title",info.title);
@@ -534,8 +578,7 @@ public final class MainActivity extends Activity {
                 runOnUiThread(()->{
                     nasBusy=false;nasStatus="取得失敗: "+friendly(e);
                     shelf();
-                    new AlertDialog.Builder(this).setTitle("EPUB取得失敗")
-                        .setMessage(friendly(e)).setPositiveButton("閉じる",null).show();
+                    showTransferError("EPUB取得に失敗しました",e);
                 });
             }
         },"smb-download").start();
@@ -551,15 +594,23 @@ public final class MainActivity extends Activity {
         nasBusy=true;nasStatus="EPUBの表紙を取得中…";shelf();
         new Thread(()->{
             int ok=0,fail=0;
+            Exception firstError=null;
+            String firstFile="";
             for(SmbRepository.RemoteBook item:queue){
                 try{fetchRemote(cfg,item);ok++;}
-                catch(Exception e){fail++;}
+                catch(Exception e){
+                    fail++;
+                    if(firstError==null){firstError=e;firstFile=item.name;}
+                }
             }
             final int success=ok,errors=fail;
+            final Exception cause=firstError;
+            final String filename=firstFile;
             runOnUiThread(()->{
                 nasBusy=false;
                 nasStatus="表紙取得: "+success+"冊成功・"+errors+"冊失敗";
                 shelf();
+                if(cause!=null)showTransferError("表紙取得失敗："+filename,cause);
             });
         },"smb-cover-sync").start();
     }

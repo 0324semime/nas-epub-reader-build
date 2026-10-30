@@ -1,4 +1,10 @@
 # Changelog
+## v0.4.2
+- Expose detailed EPUB transfer failures and progress instead of only success/fail counters.
+- Add a copyable diagnostic including nested SMB exceptions and Tailscale transport stats.
+- Avoid closing proxied SMB TCP connections on first EOF; complete both transfer directions.
+- Retain v0.4.1 saved Tailscale target and SMB connection diagnostics.
+
 ## v0.4.1
 - Fix confusing Tailscale settings activation: start button saves enabled state and destination.
 - Show actual persisted network route in the library and folder browser screens.

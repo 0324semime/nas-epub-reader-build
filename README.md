@@ -1,4 +1,17 @@
-# NAS EPUB Reader — v0.4.1 embedded Tailscale connectivity diagnostic
+# NAS EPUB Reader — v0.4.2 EPUB transfer diagnostics
+
+## Fixes in v0.4.2
+- Retain full SMB file download exceptions in a pop-up when a single download or cover batch fails.
+- The batch cover importer now reports which EPUB failed and its complete exception-cause chain, with an Android clipboard copy action.
+- Show live transferred bytes during EPUB file download, then switch to a parsing status after the download finishes.
+- Separate "EPUB received" from "EPUB parsed": transfer errors and metadata errors are distinguishable.
+- Add SMB network traffic telemetry to Go tsnet state (accepted connection count, bytes sent to NAS, bytes received from NAS, last transport error).
+- Replace premature teardown of bidirectional TCP streams with half-close and full drain: a probable cause for large SMB file transfer failures.
+- Keep the working NAS share browser, local bookshelf, and Tailscale login UX unchanged.
+- Debug logs never include passwords or Tailscale authorization tokens. The diagnostic may include the configured private NAS address and the filename.
+- **Test plan:** on mobile data, keep the embedded Tailscale SMB target 192.168.3.4, refresh shelf, tap the EPUB or cover sync, and if failed copy the new detailed diagnostic instead of sending only the count.
+
+## Previous version: v0.4.1 embedded Tailscale connectivity diagnostic
 
 ## Fixes in v0.4.1
 - Explicitly display the saved SMB connection route on both bookshelf and folder selection screens.

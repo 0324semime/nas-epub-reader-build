@@ -16,6 +16,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -139,22 +140,51 @@ public final class SmbRepository {
             }
         }
     }
-    public static void download(Settings cfg,String path,File output,long maxBytes) throws Exception{
+    public interface DownloadProgress {
+        void onBytes(long bytesRead);
+    }
+    /** Downloads an EPUB from SMB with progress notifications, without printing secrets. */
+    public static void download(Settings cfg,String path,File output,long maxBytes,
+                                DownloadProgress progress) throws Exception{
         if(path.startsWith("\\")||path.startsWith("/")||path.contains("..")||path.contains("\0"))
             throw new IllegalArgumentException("不正なファイルパス");
-        connected(cfg,share->{
-            try(com.hierynomus.smbj.share.File remote=share.openFile(
-                path,EnumSet.of(AccessMask.GENERIC_READ),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OPEN,null);
-                InputStream in=remote.getInputStream();
-                FileOutputStream out=new FileOutputStream(output)){
-                byte[] buffer=new byte[32768];int n;long size=0;
-                while((n=in.read(buffer))!=-1){
-                    size+=n;
-                    if(size>maxBytes)throw new IOException("EPUBは150MB以下にしてください");
-                    out.write(buffer,0,n);
+        final long[] downloaded={0L};
+        try {
+            connected(cfg,share->{
+                try(com.hierynomus.smbj.share.File remote=share.openFile(
+                    path,EnumSet.of(AccessMask.GENERIC_READ),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OPEN,null);
+                    InputStream in=remote.getInputStream();
+                    FileOutputStream out=new FileOutputStream(output)){
+                    byte[] buffer=new byte[65536];
+                    int n;
+                    long lastBytes=0;
+                    long lastSignal=System.nanoTime();
+                    while((n=in.read(buffer))!=-1){
+                        if(n==0)continue;
+                        downloaded[0]+=n;
+                        if(downloaded[0]>maxBytes)throw new IOException("EPUBは150MB以下にしてください");
+                        out.write(buffer,0,n);
+                        long now=System.nanoTime();
+                        if(progress!=null &&
+                            (downloaded[0]-lastBytes>=524288L || now-lastSignal>500000000L)){
+                            progress.onBytes(downloaded[0]);
+                            lastBytes=downloaded[0];
+                            lastSignal=now;
+                        }
+                    }
+                    out.getFD().sync();
+                    if(progress!=null)progress.onBytes(downloaded[0]);
                 }
-            }
-            return null;
-        });
+                return null;
+            });
+            if(downloaded[0]==0)throw new IOException("0バイトのEPUBを受信しました");
+        }catch(Exception e){
+            throw new IOException("SMBダウンロードに失敗（受信 "
+                +downloaded[0]+" bytes）："+e.getClass().getSimpleName()
+                +(e.getMessage()==null?"":": "+e.getMessage()),e);
+        }
+    }
+    public static void download(Settings cfg,String path,File output,long maxBytes)throws Exception{
+        download(cfg,path,output,maxBytes,null);
     }
 }

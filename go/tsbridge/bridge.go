@@ -36,6 +36,10 @@ type state struct {
     Error string `json:"error,omitempty"`
     Target string `json:"target,omitempty"`
     Port int `json:"port,omitempty"`
+    TunnelSessions uint64 `json:"tunnel_sessions,omitempty"`
+    BytesFromNAS uint64 `json:"bytes_from_nas,omitempty"`
+    BytesToNAS uint64 `json:"bytes_to_nas,omitempty"`
+    LastTunnelError string `json:"last_tunnel_error,omitempty"`
 }
 var shared struct {
     sync.Mutex
@@ -217,6 +221,7 @@ func StartSmbTunnel(host string)int {
     shared.tunnelPort=port
     shared.status.Target=host
     shared.status.Port=port
+    shared.status.LastTunnelError=""
     shared.Unlock()
     go func(){
         for {
@@ -226,22 +231,72 @@ func StartSmbTunnel(host string)int {
                 defer local.Close()
                 shared.Lock()
                 valid:=shared.generation==gen && shared.server==srv && shared.tunnel==listen
+                if valid{shared.status.TunnelSessions++}
                 shared.Unlock()
                 if !valid{return}
                 ctx,cancel:=context.WithTimeout(context.Background(),15*time.Second)
                 upstream,err:=srv.Dial(ctx,"tcp",net.JoinHostPort(host,"445"))
                 cancel()
-                if err!=nil{return}
+                if err!=nil{
+                    recordTunnelError(gen,fmt.Errorf("Tailscale SMB dial: %w",err))
+                    return
+                }
                 defer upstream.Close()
-                done:=make(chan struct{},2)
-                go func(){_,_=io.Copy(upstream,local);done<-struct{}{}}()
-                go func(){_,_=io.Copy(local,upstream);done<-struct{}{}}()
-                <-done
-                // Closing both connections releases any remaining copier.
+
+                // Full-duplex SMB: don't close both TCP sockets as soon as one
+                // direction observes EOF. Allow the other direction to drain.
+                type copied struct{
+                    fromNAS bool
+                    count int64
+                    err error
+                }
+                done:=make(chan copied,2)
+                go func(){
+                    n,e:=io.Copy(upstream,local)
+                    if conn,ok:=upstream.(interface{CloseWrite() error});ok{_ = conn.CloseWrite()}
+                    done<-copied{fromNAS:false,count:n,err:e}
+                }()
+                go func(){
+                    n,e:=io.Copy(local,upstream)
+                    if conn,ok:=local.(interface{CloseWrite() error});ok{_ = conn.CloseWrite()}
+                    done<-copied{fromNAS:true,count:n,err:e}
+                }()
+                first:=<-done
+                // A closed half-connection must not strand its peer forever.
+                if first.fromNAS {
+                    _ = local.SetReadDeadline(time.Now().Add(20*time.Second))
+                } else {
+                    _ = upstream.SetReadDeadline(time.Now().Add(20*time.Second))
+                }
+                second:=<-done
+                shared.Lock()
+                if shared.generation==gen {
+                    for _,item:=range []copied{first,second}{
+                        if item.fromNAS{shared.status.BytesFromNAS+=uint64(item.count)
+                        }else{shared.status.BytesToNAS+=uint64(item.count)}
+                    }
+                }
+                shared.Unlock()
+                if first.err!=nil && !errors.Is(first.err,io.EOF){
+                    recordTunnelError(gen,fmt.Errorf("SMB TCP copy: %w",first.err))
+                }
+                if second.err!=nil && !errors.Is(second.err,io.EOF){
+                    recordTunnelError(gen,fmt.Errorf("SMB TCP copy: %w",second.err))
+                }
             }(incoming)
         }
     }()
     return port
+}
+func recordTunnelError(generation uint64,err error){
+    if err==nil{return}
+    message:=err.Error()
+    if len(message)>240{message=message[:240]}
+    shared.Lock()
+    if shared.generation==generation {
+        shared.status.LastTunnelError=message
+    }
+    shared.Unlock()
 }
 func StopSmbTunnel(){
     shared.Lock()
