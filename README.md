@@ -1,3 +1,34 @@
+# NAS EPUB Thor — Mode A preview v0.5.0-alpha1
+
+This is an **experimental branch** based on verified stable v0.4.6; stable is preserved under `stable/v0.4.6`.
+
+## Main feature: top page → bottom page
+- AYN Thor's second Android display is discovered using the public DisplayManager Presentation category, not a hardcoded display ID.
+- Top/main display shows the first chunk of prose. Bottom/Presentation display shows the next chunk from the same EPUB chapter or its successor.
+- **Next** advances past both chunks. **Previous** returns to the prior pair (page history is retained between app launches).
+- **Aa** allows separate sizes (14–26sp) for top and bottom. Defaults top 20sp, bottom 18sp; bottom text is not squeezed to fit the same number of characters.
+- Each chunk fits the actual available measured width/height using Android StaticLayout.
+- Thor-specific bookmarks save chapter and text offset. Reading progress persists separately from one-screen WebView progress.
+- Navigation drawer offers mode switch and a bottom display identification/font legibility test.
+- On phones without a second usable presentation display, opens the existing one-screen reader.
+- If a presentation cannot be shown, offers the one-screen reader as a fallback.
+- Existing SMB/Tailscale, bookshelf, metadata previews and Wi-Fi-only EPUB body downloads are retained.
+
+## Separate installation
+This experimental APK uses a different applicationId, `com.semime.nasepub.thor`, and a visible name `NAS EPUB Thor`. It can coexist with the original stable app and does not erase its books. The new APK has **separate private app storage**, so NAS credentials, Tailscale login and downloaded EPUBs must be set up or imported again in this test app.
+
+## Limits and testing
+- This first milestone **renders prose text only**. Embedded illustrations, ruby, author CSS and vertical writing are not preserved in dual mode. The original one-screen WebView remains for rich formatting.
+- Pages are generated from HTML text (Android Html.fromHtml) and the EPUB spine; the "chapter" count is the number of internal HTML resources.
+- Test that the lower panel is enabled and not covered by another app or Android system panel.
+- On-device confirmation is required for display mapping, lower touch controls, fit, page continuity and font legibility.
+- Android's display-presentation policy may reject the second window on some firmware; a diagnostic and single-screen fallback are provided.
+- The GitHub debug signature is not stable. The separate app ID protects stable, but future test APKs may need a reinstall.
+
+## Next
+Add ruby/vertical layout and embedded images with a DOM-aware pagination engine after validating dual-display discovery and text continuity on physical Thor.
+
+## Earlier stable changes
 # NAS EPUB Reader — v0.4.6 refined library and reading tools
 
 ## v0.4.6 — Reading experience refresh
@@ -102,14 +133,4 @@
 ## Technical design
 - Native Go tsnet.Server embedded as an arm64 Android AAR via gomobile.
 - Only 127.0.0.1 local TCP listener; no system-wide VPN.
-- Target limited to tailnet 100.64.0.0/10, *.ts.net, or RFC1918 addresses reachable via subnet routers.
-- SMB user/password authentication remains in SMBJ; SMB access is read-only.
-
-## Limitations
-- ARM64 only, initially intended for AYN Thor.
-- Experimental: real-device login and SMB transit not yet validated.
-- Android native Go bridge makes the APK larger.
-- Independent node identity from GameTrade Mobile.
-- Debug APK may require uninstall of previous builds, clearing private book cache/settings.
-- Dual-screen postponed.
-- No Tailscale auth keys or NAS secrets are in the public source.
+- Target limited to tailnet

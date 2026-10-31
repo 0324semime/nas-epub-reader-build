@@ -1,4 +1,14 @@
 # Changelog
+
+## v0.5.0-thor-alpha1
+- Branch from stable/v0.4.6 without changing the stable APK.
+- Implement Android Presentation lower-screen text reader and independent page splitting, plus per-display text size.
+- Add display diagnostics, on-device lower-panel font test and fallbacks.
+- Persist upper-page cursor, history and Thor-specific bookmarks.
+- Change application ID to permit side-by-side installation with stable v0.4.6.
+- Retain Wi-Fi-only EPUB downloading, SMB browsing and embedded Tailscale.
+
+# Changelog
 ## v0.4.6
 - Remove Tailscale route text from library main header; keep network controls in the drawer.
 - Add persistent per-book multi-bookmark and bookmark navigation.

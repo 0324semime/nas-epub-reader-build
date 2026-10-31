@@ -56,6 +56,7 @@ public final class MainActivity extends Activity {
     private JSONObject openedBook;
     private LinearLayout root;
     private WebView reader;
+    private ThorDualReader thorReader;
     private int chapter = 0;
     private int fontSize = 100;
     private String shelfFilter = "";
@@ -193,6 +194,7 @@ public final class MainActivity extends Activity {
         folderBrowserVisible=false;
         tailnetPanelVisible=false;
         ++folderBrowserRevision;
+        if(thorReader!=null){thorReader.close();thorReader=null;}
         openedBook=null;openedFolder=null;screen();
         // Compact header: navigation, bookshelf name, and one refresh action.
         LinearLayout header=layout(true);
@@ -420,7 +422,7 @@ public final class MainActivity extends Activity {
         String source=book.optString("source","");
         SmbRepository.RemoteBook remote=source.isEmpty()?null:
             new SmbRepository.RemoteBook(book.optString("title",""),source);
-        View.OnClickListener onClick=v->open(book);
+        View.OnClickListener onClick=v->openBookAccordingToMode(book);
         View.OnLongClickListener onLong=v->{
             showBookMenu(remote,book,null);return true;
         };
@@ -487,6 +489,8 @@ public final class MainActivity extends Activity {
         addDrawerItem(list,"▤","読み取りフォルダ選択","SMBフォルダを参照",()->startFolderBrowser(),dialog);
         addDrawerItem(list,"◇","内蔵Tailscale","外出先接続と通信診断",()->showTailnetPanel(),dialog);
         addDrawerItem(list,"＋","端末のEPUBを追加","ローカルファイルから取り込む",()->pick(),dialog);
+        addDrawerItem(list,"▣","Thor 2画面モード","上画面と下画面に連続する文章を表示",
+            ()->showThorControls(),dialog);
         addDrawerItem(list,"◷","読書設定","文字の大きさ",()->showReaderSettings(),dialog);
         addDrawerItem(list,"▧","キャッシュ管理","表紙データの確認と削除",()->showCacheManager(),dialog);
         addDrawerItem(list,"↺","非表示の本を戻す","この端末の非表示設定を解除",()->restoreHidden(),dialog);
@@ -568,8 +572,8 @@ public final class MainActivity extends Activity {
     }
     private void showAppInfo(){
         new AlertDialog.Builder(this)
-            .setTitle("NAS EPUB Reader")
-            .setMessage("Version 0.4.6\n\n"
+            .setTitle("NAS EPUB Reader · Thor")
+            .setMessage("Version 0.5.0 Thor Mode A (preview)\n\n"
                 +"NAS内のEPUBを表紙付きで管理できる読書アプリです。"
                 +"表紙を長押しすると書籍メニューが開きます。\n"
                 +"本文のダウンロードはWi-Fi接続時のみ可能です。\n"
@@ -1108,6 +1112,7 @@ public final class MainActivity extends Activity {
         boolean downloaded=book!=null;
         List<String> actions=new ArrayList<>();
         actions.add(downloaded?"📖 本を読む":"⬇ 本文をダウンロード（Wi-Fiのみ）");
+        if(downloaded)actions.add("▣ Thorで上下2ページ表示");
         if(downloaded)actions.add("🗑 本文を削除（端末のみ）");
         if(remote!=null)actions.add("🙈 本棚から非表示（この端末のみ）");
         if(remote!=null)actions.add("🖼 表紙キャッシュを削除");
@@ -1115,8 +1120,9 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle(name.isEmpty()?"書籍メニュー":name)
             .setItems(actions.toArray(new String[0]),(dialog,which)->{
                 String selected=actions.get(which);
-                if(selected.startsWith("📖") && book!=null)open(book);
+                if(selected.startsWith("📖") && book!=null)openBookAccordingToMode(book);
                 else if(selected.startsWith("⬇") && remote!=null)downloadRemoteBook(remote);
+                else if(selected.startsWith("▣") && book!=null)openThorBook(book);
                 else if(selected.startsWith("🗑") && book!=null)confirmLocalDeletion(book);
                 else if(selected.startsWith("🙈") && remote!=null){
                     new AlertDialog.Builder(this).setTitle("本棚から非表示にしますか？")
@@ -1170,7 +1176,7 @@ public final class MainActivity extends Activity {
         JSONObject existing=cachedRemote(item);
         if(existing!=null){
             Toast.makeText(this,"本文は保存済みです",Toast.LENGTH_SHORT).show();
-            open(existing);return;
+            openBookAccordingToMode(existing);return;
         }
         if(!isWifiConnected()){
             new AlertDialog.Builder(this).setTitle("Wi-Fi接続が必要です")
@@ -1634,6 +1640,111 @@ public final class MainActivity extends Activity {
         }catch(Exception ignored){}
         reader.loadUrl(Uri.fromFile(f).toString());
     }
+    private boolean thorEnabled(){
+        return getPreferences(0).getBoolean("thor_mode_a",true);
+    }
+    private void openBookAccordingToMode(JSONObject book){
+        if(thorEnabled() && ThorDualReader.findBottom(this)!=null){
+            openThorBook(book);
+        }else open(book);
+    }
+    private void showThorControls(){
+        final boolean currently=thorEnabled();
+        String displayStatus=ThorDualReader.displays(this);
+        new AlertDialog.Builder(this)
+            .setTitle("AYN Thor 2画面読書")
+            .setMessage("モードA（上画面から下画面へ続けて読む）"
+                +"\n現在: "+(currently?"自動2画面モード":"通常の1画面モード")
+                +"\n\n"+displayStatus
+                +"\n2画面が検出される場合、保存済みの表紙を押すとモードAで開きます。"
+                +"\n画像を含む複雑なEPUBは現在テキスト中心の簡易レイアウトになります。")
+            .setNegativeButton("閉じる",null)
+            .setNeutralButton(currently?"通常1画面に切替":"2画面を既定にする",
+                (dialog,which)->{
+                    getPreferences(0).edit().putBoolean("thor_mode_a",!currently).apply();
+                    Toast.makeText(this,!currently?"2画面モードを有効にしました":
+                        "通常モードに切り替えました",Toast.LENGTH_SHORT).show();
+                })
+            .setPositiveButton("下画面へテスト表示",(dialog,which)->thorDisplayTest())
+            .show();
+    }
+    private void thorDisplayTest(){
+        android.view.Display lower=ThorDualReader.findBottom(this);
+        if(lower==null){
+            new AlertDialog.Builder(this).setTitle("下画面が未検出です")
+                .setMessage(ThorDualReader.displays(this)
+                    +"\n端末の下画面をオンにしてからお試しください。")
+                .setPositiveButton("閉じる",null).show();
+            return;
+        }
+        android.app.Presentation test=new android.app.Presentation(this,lower);
+        LinearLayout panel=layout(false);
+        panel.setBackgroundColor(Color.rgb(248,245,234));
+        panel.setGravity(Gravity.CENTER);
+        panel.setPadding(d(24),d(18),d(24),d(18));
+        TextView title=text("AYN Thor · 下画面",24,true);
+        title.setGravity(Gravity.CENTER);
+        panel.addView(title);
+        TextView explanation=text(
+            "下画面でこの文字が読めれば表示制御は成功です。\n\n"
+            +"14sp・16sp・18sp・20spの読みやすさを比較できます。",15,false);
+        explanation.setGravity(Gravity.CENTER);
+        explanation.setPadding(0,d(14),0,d(14));
+        panel.addView(explanation);
+        final int[] sizes={14,16,18,20};
+        for(int value:sizes){
+            TextView sample=text(value+"sp：今日は読書を楽しむ日です。",value,false);
+            sample.setGravity(Gravity.CENTER);
+            sample.setPadding(0,d(5),0,d(5));
+            panel.addView(sample);
+        }
+        Button close=button("テストを閉じる",v->test.dismiss());
+        // Replaced below with a local target after the dialog is constructed.
+        panel.addView(close);
+        test.setContentView(panel);
+        try{test.show();}
+        catch(RuntimeException e){
+            new AlertDialog.Builder(this).setTitle("下画面のテストに失敗")
+                .setMessage(e.getClass().getSimpleName()+": "+e.getMessage())
+                .setPositiveButton("閉じる",null).show();
+        }
+    }
+    private void openThorBook(JSONObject book){
+        if(thorReader!=null){thorReader.close();thorReader=null;}
+        File folder=new File(library,book.optString("id",""));
+        if(!folder.isDirectory()){
+            Toast.makeText(this,"先に本文をWi-Fiで保存してください",Toast.LENGTH_LONG).show();
+            return;
+        }
+        ThorDualReader dual=new ThorDualReader(this,folder,book,()->{
+            if(thorReader!=null){thorReader.close();thorReader=null;}
+            shelf();
+        });
+        screen();
+        root.addView(dual.createTopView(),new LinearLayout.LayoutParams(-1,-1));
+        if(!dual.start()){
+            dual.close();
+            root.removeAllViews();
+            new AlertDialog.Builder(this)
+                .setTitle("下画面に表示できませんでした")
+                .setMessage(ThorDualReader.displays(this)
+                    +"\n2画面の状態を確認してください。通常読書画面で開き直せます。")
+                .setNegativeButton("本棚へ戻る",(dialog,which)->shelf())
+                .setPositiveButton("通常表示で読む",(dialog,which)->open(book))
+                .show();
+            return;
+        }
+        thorReader=dual;
+    }
+    @Override protected void onResume(){
+        super.onResume();
+        if(thorReader!=null)thorReader.onHostResume();
+    }
+    @Override protected void onDestroy(){
+        if(thorReader!=null){thorReader.close();thorReader=null;}
+        super.onDestroy();
+    }
+
     private void open(JSONObject book){
         openedBook=book;
         openedFolder=new File(library,book.optString("id"));
@@ -1848,7 +1959,8 @@ public final class MainActivity extends Activity {
         file.delete();
     }
     @Override public void onBackPressed(){
-        if(tailnetPanelVisible){tailnetPanelVisible=false;shelf();}
+        if(thorReader!=null){thorReader.close();thorReader=null;shelf();}
+        else if(tailnetPanelVisible){tailnetPanelVisible=false;shelf();}
         else if(folderBrowserVisible){
             if(folderBrowserPath.isEmpty())leaveBrowser();
             else loadFolder(parentFolder(folderBrowserPath));

@@ -5,11 +5,11 @@ android {
     namespace 'com.semime.nasepub'
     compileSdk 35
     defaultConfig {
-        applicationId 'com.semime.nasepub'
+        applicationId 'com.semime.nasepub.thor'
         minSdk 26
         targetSdk 34
-        versionCode 11
-        versionName '0.4.6'
+        versionCode 12
+        versionName '0.5.0-thor-alpha1'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
