@@ -10,6 +10,9 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
+import android.net.Network;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -112,6 +115,7 @@ public final class MainActivity extends Activity {
             if(!dir.getName().equals(o.optString("id")))continue;
             String source=o.optString("source","");
             if(!source.isEmpty()){
+                if(isHidden(o.optString("id")))continue;
                 if(!smbPreferences.hasFolderSelection())continue;
                 if(!dir.getName().equals(remoteId(source)))continue;
                 String selected=smbSettings.folder;
@@ -133,7 +137,7 @@ public final class MainActivity extends Activity {
         bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         bar.addView(button("＋ EPUB追加",v->pick()));
         root.addView(bar);
-        TextView note=text("v0.4.3  /  低速回線向け本棚",12,false);
+        TextView note=text("v0.4.4  /  本文はWi-Fiで手動保存",12,false);
         note.setPadding(d(16),0,d(8),d(6));root.addView(note);
         LinearLayout smbBar=layout(true);
         smbBar.setPadding(d(8),0,d(8),d(4));
@@ -156,6 +160,17 @@ public final class MainActivity extends Activity {
           : "📁 読み取りフォルダが未設定です。まず「フォルダ選択」を押してください。",12,false);
         selected.setPadding(d(16),0,d(12),d(10));
         root.addView(selected);
+        int hiddenCount=getHiddenIds().size();
+        if(hiddenCount>0)root.addView(button("非表示の本を戻す（"+hiddenCount+"冊）",v->{
+            new AlertDialog.Builder(this).setTitle("非表示の本を再表示")
+                .setMessage("この端末で非表示にした本をすべて本棚に戻します。NASのファイルは変更しません。")
+                .setNegativeButton("キャンセル",null)
+                .setPositiveButton("再表示",(dialog,which)->{
+                    getSharedPreferences("hidden_books_v1",MODE_PRIVATE)
+                        .edit().remove("hidden").apply();
+                    shelf();
+                }).show();
+        }));
         ScrollView scroll=new ScrollView(this);
         LinearLayout list=layout(false);list.setPadding(d(12),0,d(12),d(20));
         scroll.addView(list);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
@@ -187,14 +202,10 @@ public final class MainActivity extends Activity {
                 TextView author=text(book.optString("author",""),12,false);author.setMaxLines(1);card.addView(author);
                 card.setOnClickListener(v->open(book));
                 card.setOnLongClickListener(v->{
-                    new AlertDialog.Builder(this).setTitle("本を削除しますか？")
-                       .setMessage(book.optString("title",""))
-                       .setNegativeButton("キャンセル",null)
-                       .setPositiveButton("削除",(dia,w)->{
-                           File f=new File(library,book.optString("id"));
-                           try{if(f.getCanonicalFile().getParentFile().equals(library.getCanonicalFile()))delete(f);}catch(Exception ignored){}
-                           shelf();
-                       }).show();
+                    String source=book.optString("source","");
+                    SmbRepository.RemoteBook remote=source.isEmpty()?null
+                        :new SmbRepository.RemoteBook(book.optString("title",""),source);
+                    showBookMenu(remote,book,null);
                     return true;
                 });
             }
@@ -305,9 +316,13 @@ public final class MainActivity extends Activity {
         TextView name=text(info.optString("title",remote.name),15,true);
         labels.addView(name);
         labels.addView(text(info.optString("author",""),12,false));
-        labels.addView(text("タップして本文をダウンロード",12,false));
+        labels.addView(text("本文未保存・表紙を長押しでメニュー",12,false));
         card.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
-        card.setOnClickListener(v->fetchAndOpen(remote));
+        card.setOnClickListener(v->showPreviewTap(remote));
+        card.setOnLongClickListener(v->{
+            showBookMenu(remote,null,info);
+            return true;
+        });
         list.addView(card);
         addLine(list);
     }
@@ -316,19 +331,19 @@ public final class MainActivity extends Activity {
         if(nasBooks.isEmpty())return;
         int remaining=0,withoutPreview=0;
         for(SmbRepository.RemoteBook item:nasBooks){
-            if(cachedRemote(item)!=null)continue;
+            if(isHidden(remoteId(item.path)) || cachedRemote(item)!=null)continue;
             remaining++;
             if(cachedPreview(item)==null)withoutPreview++;
         }
         TextView section=text("NASの本（本文未取得 "+remaining+"冊）",17,true);
         section.setPadding(d(6),d(8),d(6),d(3));list.addView(section);
-        TextView help=text("低速回線では先に表紙と書誌情報だけ取得します。本文はタップ時に取得。",12,false);
+        TextView help=text("本文はWi-Fi時のみ手動で保存します。表紙を長押しすると操作メニューが開きます。",12,false);
         list.addView(help);
         if(withoutPreview>0)
             list.addView(button("表紙だけ軽量取得（最大12冊ずつ）",v->syncNasCovers()));
         int shown=0;
         for(SmbRepository.RemoteBook item:nasBooks){
-            if(cachedRemote(item)!=null)continue;
+            if(isHidden(remoteId(item.path)) || cachedRemote(item)!=null)continue;
             if(shown++>=120){
                 list.addView(text("ほかのファイルもあります。検索範囲を絞ってください。",12,false));
                 break;
@@ -337,7 +352,11 @@ public final class MainActivity extends Activity {
             if(preview!=null){addPreviewCard(list,item,preview);continue;}
             TextView entry=text("  ↓  "+item.name,14,false);
             entry.setPadding(d(6),d(11),d(6),d(11));
-            entry.setOnClickListener(v->fetchAndOpen(item));
+            entry.setOnClickListener(v->showPreviewTap(item));
+            entry.setOnLongClickListener(v->{
+                showBookMenu(item,null,null);
+                return true;
+            });
             list.addView(entry);
         }
         if(remaining<nasBooks.size() || remaining>0){
@@ -589,7 +608,8 @@ public final class MainActivity extends Activity {
                     nasBusy=false;shelf();
                     // Show the book list immediately; fetch only small cover previews in the background.
                     for(SmbRepository.RemoteBook item:results){
-                        if(cachedRemote(item)==null && cachedPreview(item)==null){
+                        if(!isHidden(remoteId(item.path))
+                            && cachedRemote(item)==null && cachedPreview(item)==null){
                             syncNasCovers();
                             break;
                         }
@@ -664,7 +684,7 @@ public final class MainActivity extends Activity {
             reportTransfer("SMBからEPUBを取得中: "+item.name+"（0 KB）");
             SmbRepository.download(cfg,item.path,temp,150L*1024*1024,
                 bytes->reportTransfer("SMBからEPUBを取得中: "+item.name
-                    +"（"+(bytes/1024L)+" KB）"));
+                    +"（"+(bytes/1024L)+" KB）"),this::isWifiConnected);
             reportTransfer("転送完了。EPUBを解析中: "+item.name
                 +"（"+(temp.length()/1024L)+" KB）");
             EpubParser.BookInfo info=EpubParser.extractAndParse(temp,dir);
@@ -684,32 +704,139 @@ public final class MainActivity extends Activity {
             throw e;
         }finally{temp.delete();}
     }
-    private void fetchAndOpen(SmbRepository.RemoteBook item){
-        if(nasBusy)return;
+    private boolean isWifiConnected(){
+        ConnectivityManager cm=(ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
+        if(cm==null)return false;
+        Network active=cm.getActiveNetwork();
+        if(active==null)return false;
+        NetworkCapabilities caps=cm.getNetworkCapabilities(active);
+        return caps!=null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+    }
+    private Set<String> getHiddenIds(){
+        Set<String> hidden=getSharedPreferences("hidden_books_v1",MODE_PRIVATE)
+            .getStringSet("hidden",Collections.emptySet());
+        return new HashSet<>(hidden);
+    }
+    private boolean isHidden(String id){return getHiddenIds().contains(id);}
+    private void hideRemoteBook(SmbRepository.RemoteBook remote){
+        Set<String> hidden=getHiddenIds();
+        hidden.add(remoteId(remote.path));
+        getSharedPreferences("hidden_books_v1",MODE_PRIVATE)
+            .edit().putStringSet("hidden",hidden).apply();
+        shelf();
+    }
+    private void showPreviewTap(SmbRepository.RemoteBook remote){
+        JSONObject book=cachedRemote(remote);
+        if(book!=null){open(book);return;}
+        new AlertDialog.Builder(this)
+            .setTitle("本文はまだ保存されていません")
+            .setMessage("表紙を長押しし、「本文をダウンロード」を選択してください。"
+                +"本文のダウンロードはWi-Fi接続時のみ行います。"
+                +"\n表紙とタイトルはモバイル回線でも表示できます。")
+            .setPositiveButton("閉じる",null).show();
+    }
+    private void showBookMenu(SmbRepository.RemoteBook remote,JSONObject book,JSONObject preview){
+        String name=book!=null?book.optString("title",""):preview!=null
+            ?preview.optString("title",remote==null?"":remote.name)
+            :remote==null?"":remote.name;
+        boolean downloaded=book!=null;
+        List<String> actions=new ArrayList<>();
+        actions.add(downloaded?"📖 本を読む":"⬇ 本文をダウンロード（Wi-Fiのみ）");
+        if(downloaded)actions.add("🗑 本文を削除（端末のみ）");
+        if(remote!=null)actions.add("🙈 本棚から非表示（この端末のみ）");
+        if(remote!=null)actions.add("🖼 表紙キャッシュを削除");
+        actions.add("ℹ 書籍情報");
+        new AlertDialog.Builder(this).setTitle(name.isEmpty()?"書籍メニュー":name)
+            .setItems(actions.toArray(new String[0]),(dialog,which)->{
+                String selected=actions.get(which);
+                if(selected.startsWith("📖") && book!=null)open(book);
+                else if(selected.startsWith("⬇") && remote!=null)downloadRemoteBook(remote);
+                else if(selected.startsWith("🗑") && book!=null)confirmLocalDeletion(book);
+                else if(selected.startsWith("🙈") && remote!=null){
+                    new AlertDialog.Builder(this).setTitle("本棚から非表示にしますか？")
+                        .setMessage("この端末の本棚から隠すだけです。NAS上のEPUBは削除されません。"
+                          +"非表示の本は本棚画面から復元できます。")
+                        .setNegativeButton("キャンセル",null)
+                        .setPositiveButton("非表示にする",(d,w)->hideRemoteBook(remote))
+                        .show();
+                }else if(selected.startsWith("🖼") && remote!=null){
+                    File dir=new File(previews,remoteId(remote.path));
+                    if(isDirectChild(previews,dir))delete(dir);
+                    shelf();
+                    Toast.makeText(this,"表紙キャッシュだけ削除しました",Toast.LENGTH_SHORT).show();
+                }else if(selected.startsWith("ℹ")){
+                    String detail=(name.isEmpty()?"タイトル不明":name)
+                        +"\n"+(book!=null?book.optString("author","")
+                        :preview!=null?preview.optString("author",""):"")
+                        +"\n本文: "+(downloaded?"端末に保存済み":"未保存")
+                        +"\n原本: "+(remote!=null?"NAS（変更しません）":"端末");
+                    new AlertDialog.Builder(this).setTitle("書籍情報").setMessage(detail)
+                        .setPositiveButton("閉じる",null).show();
+                }
+            }).setNegativeButton("閉じる",null).show();
+    }
+    private boolean isDirectChild(File parent,File child){
+        try{return child.getCanonicalFile().getParentFile().equals(parent.getCanonicalFile());}
+        catch(Exception e){return false;}
+    }
+    private void confirmLocalDeletion(JSONObject book){
+        String id=book.optString("id","");
+        File dir=new File(library,id);
+        if(id.isEmpty()||!isDirectChild(library,dir))return;
+        new AlertDialog.Builder(this).setTitle("端末内の本文を削除しますか？")
+            .setMessage(book.optString("title","")
+                +"\n本文データと、この端末の読書位置が削除されます。"
+                +"\nNAS上のEPUBは削除しません。")
+            .setNegativeButton("キャンセル",null)
+            .setPositiveButton("端末から削除",(dialog,which)->{
+                delete(dir);
+                getPreferences(0).edit().remove("chapter_"+id).apply();
+                nasStatus="端末内の本文を削除しました（NASの原本は保持）";
+                shelf();
+            }).show();
+    }
+    private void downloadRemoteBook(SmbRepository.RemoteBook item){
+        if(nasBusy){
+            Toast.makeText(this,"別の処理が実行中です",Toast.LENGTH_SHORT).show();return;
+        }
+        JSONObject existing=cachedRemote(item);
+        if(existing!=null){
+            Toast.makeText(this,"本文は保存済みです",Toast.LENGTH_SHORT).show();
+            open(existing);return;
+        }
+        if(!isWifiConnected()){
+            new AlertDialog.Builder(this).setTitle("Wi-Fi接続が必要です")
+                .setMessage("本文はWi-Fi接続時のみダウンロードできます。"
+                    +"5Gなどのモバイル回線では、表紙と書誌情報だけを表示します。")
+                .setPositiveButton("閉じる",null).show();
+            return;
+        }
         SmbRepository.Settings cfg=smbSettings.copy();
-        nasBusy=true;nasStatus="EPUBを取得中: "+item.name;shelf();
+        nasBusy=true;nasStatus="Wi-FiでEPUB本文を取得中: "+item.name;shelf();
         new Thread(()->{
             try{
                 JSONObject book=fetchRemote(cfg,item);
                 runOnUiThread(()->{
-                    nasBusy=false;nasStatus="読書できます: "+item.name;
-                    open(book);
+                    nasBusy=false;nasStatus="Wi-Fiで本文を保存しました: "+item.name;
+                    shelf();
+                    Toast.makeText(this,"本文を保存しました。表紙をタップすると読めます",Toast.LENGTH_LONG).show();
                 });
             }catch(Exception e){
                 runOnUiThread(()->{
-                    nasBusy=false;nasStatus="取得失敗: "+friendly(e);
+                    nasBusy=false;nasStatus="本文取得失敗: "+friendly(e);
                     shelf();
-                    showTransferError("EPUB取得に失敗しました",e);
+                    showTransferError("本文ダウンロードに失敗しました",e);
                 });
             }
-        },"smb-download").start();
+        },"wifi-smb-download").start();
     }
     private void syncNasCovers(){
         if(nasBusy)return;
         SmbRepository.Settings cfg=smbSettings.copy();
         List<SmbRepository.RemoteBook> queue=new ArrayList<>();
         for(SmbRepository.RemoteBook item:nasBooks){
-            if(cachedRemote(item)==null && cachedPreview(item)==null && queue.size()<12)
+            if(!isHidden(remoteId(item.path))
+                && cachedRemote(item)==null && cachedPreview(item)==null && queue.size()<12)
                 queue.add(item);
         }
         if(queue.isEmpty()){

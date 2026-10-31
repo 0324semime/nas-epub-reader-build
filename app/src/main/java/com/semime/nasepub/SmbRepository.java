@@ -170,11 +170,16 @@ public final class SmbRepository {
     public interface DownloadProgress {
         void onBytes(long bytesRead);
     }
+    public interface TransferAllowed {
+        boolean allowed();
+    }
     /** Downloads an EPUB from SMB with progress notifications, without printing secrets. */
     public static void download(Settings cfg,String path,File output,long maxBytes,
-                                DownloadProgress progress) throws Exception{
+                                DownloadProgress progress,TransferAllowed permitted) throws Exception{
         if(path.startsWith("\\")||path.startsWith("/")||path.contains("..")||path.contains("\0"))
             throw new IllegalArgumentException("不正なファイルパス");
+        if(permitted!=null && !permitted.allowed())
+            throw new IOException("Wi-Fiに接続してから本文をダウンロードしてください");
         final long[] downloaded={0L};
         try {
             connected(cfg,share->{
@@ -186,7 +191,13 @@ public final class SmbRepository {
                     int n;
                     long lastBytes=0;
                     long lastSignal=System.nanoTime();
-                    while((n=in.read(buffer))!=-1){
+                    while(true){
+                        if(permitted!=null && !permitted.allowed())
+                            throw new IOException("Wi-Fi接続が切れたため、本文の取得を中止しました");
+                        n=in.read(buffer);
+                        if(n<0)break;
+                        if(permitted!=null && !permitted.allowed())
+                            throw new IOException("Wi-Fi接続が切れたため、本文の取得を中止しました");
                         if(n==0)continue;
                         downloaded[0]+=n;
                         if(downloaded[0]>maxBytes)throw new IOException("EPUBは150MB以下にしてください");
@@ -211,7 +222,11 @@ public final class SmbRepository {
                 +(e.getMessage()==null?"":": "+e.getMessage()),e);
         }
     }
+    public static void download(Settings cfg,String path,File output,long maxBytes,
+                                DownloadProgress progress)throws Exception{
+        download(cfg,path,output,maxBytes,progress,null);
+    }
     public static void download(Settings cfg,String path,File output,long maxBytes)throws Exception{
-        download(cfg,path,output,maxBytes,null);
+        download(cfg,path,output,maxBytes,null,null);
     }
 }

@@ -1,4 +1,11 @@
 # Changelog
+## v0.4.4
+- Wi-Fi-gate every full EPUB download before and during SMB transfers, leaving cellular data for previews.
+- Replace tap-to-download with cover long-press action menu.
+- Add read, Wi-Fi download, local body deletion, device-only hide and restore, cached cover deletion, and book information actions.
+- Keep local-only deletion safe: never send SMB delete/write calls.
+- Preserve embedded Tailscale, cover preview, cached EPUB reading and NAS folder selection.
+
 ## v0.4.3
 - Lightweight ZIP-range SMB preview: get book cover/title/author without downloading full EPUB.
 - Cache book list, covers, metadata persistently; show previous library immediately at launch.

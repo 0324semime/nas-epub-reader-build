@@ -1,4 +1,19 @@
-# NAS EPUB Reader — v0.4.3 low-bandwidth cover preview
+# NAS EPUB Reader — v0.4.4 Wi-Fi-only books and long-press menu
+
+## v0.4.4
+- **Full book EPUB transfers are manual and allowed only on an active Wi-Fi network.** Mobile data (5G/LTE) can still browse the NAS, obtain small EPUB cover previews and display previously downloaded books.
+- Long-press a book cover to open a context menu. For non-downloaded NAS books: **本文をダウンロード（Wi-Fiのみ）**, **本棚から非表示**, **表紙キャッシュを削除**, **書籍情報**.
+- For downloaded books: **本を読む**, **本文を削除（端末のみ）**, **本棚から非表示**, **表紙キャッシュを削除**, **書籍情報**. For locally imported EPUBs, show read, local delete and info only.
+- Tapping an already downloaded cover immediately opens its reader. Tapping a cover without a downloaded body explains how to download rather than using mobile data.
+- Download eligibility is checked before the network operation and again for every received SMB read chunk. If Wi-Fi disconnects mid-transfer the download aborts and temporary files are cleaned up.
+- Delete removes only the **app-local copy** and its local chapter resume position. It **never removes the NAS original**. The lightweight cover preview is retained after a full-book deletion.
+- Hide affects only this device's bookshelf; the "非表示の本を戻す" control restores hidden books.
+- Cached book covers, metadata and offline EPUBs remain available on mobile data and offline.
+- Download over Wi-Fi may still use embedded Tailscale to access the NAS through its private IP.
+- One-time full EPUB transfer speed depends on Wi-Fi quality; there is no background automatic download or partial-resume implementation yet.
+- Dual-screen support remains postponed.
+
+## Previous version: v0.4.3 low-bandwidth cover preview
 
 ## v0.4.3 — Fast bookshelf for throttled mobile data
 - Immediately show cached NAS book index on launch, even before contacting NAS.
