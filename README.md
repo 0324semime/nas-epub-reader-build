@@ -1,4 +1,18 @@
-# NAS EPUB Reader — v0.4.2 EPUB transfer diagnostics
+# NAS EPUB Reader — v0.4.3 low-bandwidth cover preview
+
+## v0.4.3 — Fast bookshelf for throttled mobile data
+- Immediately show cached NAS book index on launch, even before contacting NAS.
+- On SMB folder refresh, list EPUB filenames first, then automatically fetch preview covers and title/author in the background.
+- Preview retrieval uses SMB random-access reads of the ZIP central directory and **only** the EPUB container.xml, package OPF, and cover image. It does NOT download the full EPUB.
+- Independently cache lightweight covers and metadata in Android private storage. Tapping a preview downloads the full EPUB and then opens the existing offline reader.
+- If partial ZIP extraction is unsupported (ZIP64, special compression or unusual layout), the title-only file list remains usable and tapping downloads the full book.
+- Preserve cached full books, separate from lightweight preview entries. An already-downloaded EPUB opens without network traffic.
+- Re-read NAS directory index when user taps 本棚更新.
+- No new server or NAS-side installation required. Only SMB2/3 over embedded Tailscale.
+- First-time full book download is STILL limited by the actual mobile connection speed. This release accelerates bookshelf/cover recognition, not physical transfer bandwidth.
+- Public GitHub debug builds currently have ephemeral signatures: uninstall/reinstall may delete cached books/settings. Stable signing requires a securely stored signing key.
+
+## Previous version: v0.4.2 EPUB transfer diagnostics
 
 ## Fixes in v0.4.2
 - Retain full SMB file download exceptions in a pop-up when a single download or cover batch fails.

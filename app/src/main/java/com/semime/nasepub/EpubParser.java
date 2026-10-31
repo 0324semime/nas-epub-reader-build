@@ -78,6 +78,13 @@ public final class EpubParser {
     }
 
     public static BookInfo parseExtracted(File destination) throws Exception {
+        return parseExtracted(destination,false);
+    }
+    /** The metadata-only scan does not require chapter HTML files to be present. */
+    public static BookInfo parsePreview(File destination) throws Exception {
+        return parseExtracted(destination,true);
+    }
+    private static BookInfo parseExtracted(File destination,boolean preview) throws Exception {
         String opfPath = locatePackage(new File(destination, "META-INF/container.xml"));
         File opf = resolveInside(destination, destination, opfPath);
         BookInfo info = new BookInfo();
@@ -186,7 +193,7 @@ public final class EpubParser {
         if(cover!=null && !"image/svg+xml".equals(cover.type)){
             try{
                 File image=resolveInside(destination,contentRoot,cover.href);
-                if(image.isFile())info.cover=relativize(destination,image);
+                if(preview || image.isFile())info.cover=relativize(destination,image);
             }catch(IllegalArgumentException ignored){}
         }
         for(String id:spineIds){
@@ -194,14 +201,14 @@ public final class EpubParser {
             if(chapter==null || !("application/xhtml+xml".equals(chapter.type) ||
                                   "text/html".equals(chapter.type)))continue;
             File f=resolveInside(destination,contentRoot,chapter.href);
-            if(f.isFile())info.chapters.add(relativize(destination,f));
+            if(preview || f.isFile())info.chapters.add(relativize(destination,f));
         }
         if(info.chapters.isEmpty())
             throw new IllegalArgumentException("EPUBに表示できる本文がありません");
         return info;
     }
 
-    private static String locatePackage(File container) throws Exception {
+    public static String locatePackage(File container) throws Exception {
         requireXml(container,MAX_CONTAINER_BYTES);
         try(InputStream stream=new FileInputStream(container)){
             XmlPullParser p=Xml.newPullParser();

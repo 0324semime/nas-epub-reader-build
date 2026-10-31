@@ -1,4 +1,11 @@
 # Changelog
+## v0.4.3
+- Lightweight ZIP-range SMB preview: get book cover/title/author without downloading full EPUB.
+- Cache book list, covers, metadata persistently; show previous library immediately at launch.
+- Auto-fetch up to 12 preview covers in the background after refreshing the NAS index.
+- Tap a preview book to download full EPUB only when needed.
+- Retain v0.4.2 Go tsnet SMB transport and detailed error reporting.
+
 ## v0.4.2
 - Expose detailed EPUB transfer failures and progress instead of only success/fail counters.
 - Add a copyable diagnostic including nested SMB exceptions and Tailscale transport stats.

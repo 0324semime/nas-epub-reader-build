@@ -140,6 +140,33 @@ public final class SmbRepository {
             }
         }
     }
+    /** Reads selected ZIP entries over SMB random access, not the entire EPUB. */
+    public static EpubParser.BookInfo preview(Settings cfg,String path,java.io.File directory)throws Exception{
+        if(path.startsWith("\\")||path.startsWith("/")||path.contains("..")||path.indexOf('\0')>=0)
+            throw new IOException("不正なEPUBのパス");
+        return connected(cfg,share->{
+            try(com.hierynomus.smbj.share.File remote=share.openFile(
+                path,EnumSet.of(AccessMask.GENERIC_READ),null,
+                SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OPEN,null)){
+                final long size=remote.getLength();
+                RemoteZipPreview.Reader ranges=new RemoteZipPreview.Reader(){
+                    @Override public long size(){return size;}
+                    @Override public void read(long at,byte[] target,int offset,int count)throws IOException{
+                        int n=0;
+                        while(n<count){
+                            try{
+                                int got=remote.read(target,at+n,offset+n,Math.min(count-n,65536));
+                                if(got<=0)throw new IOException("SMBの範囲読み取りが途中で終了しました");
+                                n+=got;
+                            }catch(Exception e){throw new IOException("SMB部分取得に失敗: "+e.getMessage(),e);}
+                        }
+                    }
+                };
+                return RemoteZipPreview.fetch(ranges,directory);
+            }
+        });
+    }
+
     public interface DownloadProgress {
         void onBytes(long bytesRead);
     }
