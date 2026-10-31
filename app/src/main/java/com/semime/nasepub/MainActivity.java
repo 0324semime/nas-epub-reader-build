@@ -17,6 +17,7 @@ import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.Network;
+import android.os.SystemClock;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -57,6 +58,16 @@ public final class MainActivity extends Activity {
     private WebView reader;
     private int chapter = 0;
     private int fontSize = 100;
+    private String shelfFilter = "";
+    private int readerTheme = 0;
+    private int readerMargin = 1;
+    private TextView readingProgress;
+    private TextView bookmarkControl;
+    private boolean restoreReaderPosition = false;
+    private boolean restoringScroll = false;
+    private int pendingScroll = 0;
+    private long lastPositionSave = 0;
+    private String activeSearch = "";
     private SecurePrefs smbPreferences;
     private SmbRepository.Settings smbSettings;
     private final List<SmbRepository.RemoteBook> nasBooks = new ArrayList<>();
@@ -86,6 +97,8 @@ public final class MainActivity extends Activity {
         if(!previews.exists())previews.mkdirs();
         loadSavedIndex();
         fontSize = getPreferences(0).getInt("fontSize",100);
+        readerTheme = getPreferences(0).getInt("reader_theme",0);
+        readerMargin = getPreferences(0).getInt("reader_margin",1);
         shelf();
     }
     private int d(float px) { return (int)(getResources().getDisplayMetrics().density*px+.5f); }
@@ -190,8 +203,13 @@ public final class MainActivity extends Activity {
         LinearLayout titles=layout(false);titles.setPadding(d(13),0,0,0);
         TextView heading=text("マイライブラリ",21,true);
         titles.addView(heading);
-        titles.addView(subtle("NAS EPUB READER  ·  v0.4.5",10));
+        titles.addView(subtle("READ YOUR WAY",10));
         header.addView(titles,new LinearLayout.LayoutParams(0,-2,1));
+        TextView lookup=actionIcon("⌕");
+        LinearLayout.LayoutParams lookupParams=new LinearLayout.LayoutParams(d(45),d(46));
+        lookupParams.rightMargin=d(7);
+        header.addView(lookup,lookupParams);
+        lookup.setOnClickListener(v->searchLibrary());
         TextView refresh=actionIcon("↻");
         header.addView(refresh,new LinearLayout.LayoutParams(d(46),d(46)));
         refresh.setOnClickListener(v->refreshNas());
@@ -205,35 +223,48 @@ public final class MainActivity extends Activity {
         scroll.addView(page);
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
 
-        // A small status panel rather than multiple large setting buttons.
-        LinearLayout status=layout(false);
-        status.setPadding(d(14),d(11),d(14),d(11));
-        status.setBackground(bordered(surface,16,Color.rgb(230,235,232)));
+        // Keep connectivity details inside the sidebar; only the selected
+        // shelf and actual transfer/errors appear in this calm main view.
+        LinearLayout locationBar=layout(true);
+        locationBar.setPadding(d(13),d(11),d(13),d(11));
+        locationBar.setBackground(rounded(Color.rgb(234,242,237),14));
         String folderText=smbPreferences.hasFolderSelection()
             ?smbSettings.share+(smbSettings.folder.isEmpty()?"":" / "+smbSettings.folder.replace('\\','/'))
             :"フォルダ未選択";
-        TextView location=text("▣  "+folderText,12,true);
-        location.setMaxLines(2);
-        status.addView(location);
-        TextView network=subtle(EmbeddedTailnet.enabled()
-            ?"●  Tailscale経由で接続":"●  ローカルネットワーク",11);
-        network.setTextColor(accent);
-        network.setPadding(0,d(5),0,0);
-        status.addView(network);
+        TextView pathLabel=text("▣  "+folderText,12,true);
+        pathLabel.setTextColor(Color.rgb(55,98,82));
+        pathLabel.setMaxLines(2);
+        locationBar.addView(pathLabel,new LinearLayout.LayoutParams(0,-2,1));
+        TextView connectionIcon=subtle("NAS",10);
+        connectionIcon.setTextColor(accent);
+        locationBar.addView(connectionIcon);
+        page.addView(locationBar);
+
         TextView state=subtle(nasStatus,11);
-        state.setMaxLines(3);
-        state.setPadding(0,d(5),0,0);
-        status.addView(state);
+        state.setPadding(d(5),d(7),d(5),d(2));
+        state.setVisibility(nasBusy||nasStatus.contains("失敗")?View.VISIBLE:View.GONE);
+        page.addView(state);
         nasStatusView=state;
-        page.addView(status);
 
         List<JSONObject> downloaded=readBooks();
+        if(!shelfFilter.isEmpty())downloaded.removeIf(x->!bookMatches(x.optString("title",""),x.optString("author","")));
         List<SmbRepository.RemoteBook> notSaved=new ArrayList<>();
         for(SmbRepository.RemoteBook remote:nasBooks)
-            if(!isHidden(remoteId(remote.path)) && cachedRemote(remote)==null)
-                notSaved.add(remote);
+            if(!isHidden(remoteId(remote.path)) && cachedRemote(remote)==null){
+                JSONObject preview=cachedPreview(remote);
+                if(shelfFilter.isEmpty()||bookMatches(
+                        preview==null?remote.name:preview.optString("title",remote.name),
+                        preview==null?"":preview.optString("author","")))
+                    notSaved.add(remote);
+            }
         notSaved.sort(Comparator.comparing(x->x.name.toLowerCase(Locale.ROOT)));
 
+        if(!shelfFilter.isEmpty()){
+            TextView query=buttonAsLabel("検索: "+shelfFilter+"   ✕",v->{shelfFilter="";shelf();});
+            LinearLayout.LayoutParams q=new LinearLayout.LayoutParams(-1,-2);
+            q.topMargin=d(12);
+            page.addView(query,q);
+        }
         addShelfHeading(page,"保存済み",downloaded.size(),"オフラインで読める本");
         if(downloaded.isEmpty()){
             addEmptyShelf(page,"保存済みの本はまだありません",
@@ -279,6 +310,35 @@ public final class MainActivity extends Activity {
             setup.setPadding(d(5),d(12),d(5),d(12));
             page.addView(setup);
         }
+    }
+
+    private boolean bookMatches(String name,String author){
+        String search=shelfFilter.toLowerCase(Locale.ROOT);
+        return name.toLowerCase(Locale.ROOT).contains(search)
+            ||author.toLowerCase(Locale.ROOT).contains(search);
+    }
+    private TextView buttonAsLabel(String value,View.OnClickListener click){
+        TextView label=text(value,12,true);
+        label.setTextColor(accent);
+        label.setPadding(d(14),d(11),d(14),d(11));
+        label.setBackground(rounded(accentSoft,12));
+        label.setOnClickListener(click);
+        return label;
+    }
+    private void searchLibrary(){
+        EditText query=new EditText(this);
+        query.setSingleLine(true);
+        query.setHint("タイトル・著者名で探す");
+        query.setText(shelfFilter);
+        query.setPadding(d(20),d(14),d(20),d(12));
+        new AlertDialog.Builder(this).setTitle("本棚を検索")
+            .setView(query)
+            .setNegativeButton("キャンセル",null)
+            .setNeutralButton("検索解除",(dialog,which)->{shelfFilter="";shelf();})
+            .setPositiveButton("検索",(dialog,which)->{
+                shelfFilter=query.getText().toString().trim();
+                shelf();
+            }).show();
     }
 
     private void addShelfHeading(LinearLayout page,String title,int count,String description){
@@ -414,7 +474,7 @@ public final class MainActivity extends Activity {
         TextView appTitle=text("  読書棚",24,true);
         appTitle.setTextColor(accent);
         panel.addView(appTitle);
-        TextView slogan=subtle("    NAS EPUB READER  ·  v0.4.5",11);
+        TextView slogan=subtle("    NAS EPUB READER  ·  v0.4.6",11);
         slogan.setPadding(0,d(5),0,d(20));
         panel.addView(slogan);
         ScrollView scroll=new ScrollView(this);
@@ -509,7 +569,7 @@ public final class MainActivity extends Activity {
     private void showAppInfo(){
         new AlertDialog.Builder(this)
             .setTitle("NAS EPUB Reader")
-            .setMessage("Version 0.4.5\n\n"
+            .setMessage("Version 0.4.6\n\n"
                 +"NAS内のEPUBを表紙付きで管理できる読書アプリです。"
                 +"表紙を長押しすると書籍メニューが開きます。\n"
                 +"本文のダウンロードはWi-Fi接続時のみ可能です。\n"
@@ -938,7 +998,7 @@ public final class MainActivity extends Activity {
         runOnUiThread(()->{
             if(!nasBusy)return;
             nasStatus=message;
-            if(nasStatusView!=null)nasStatusView.setText(message);
+            if(nasStatusView!=null){nasStatusView.setText(message);nasStatusView.setVisibility(View.VISIBLE);}
         });
     }
     private String exceptionDetails(Throwable e){
@@ -1097,6 +1157,8 @@ public final class MainActivity extends Activity {
             .setPositiveButton("端末から削除",(dialog,which)->{
                 delete(dir);
                 getPreferences(0).edit().remove("chapter_"+id).apply();
+                getSharedPreferences("reader_marks_v1",MODE_PRIVATE).edit()
+                    .remove("bookmarks_"+id).apply();
                 nasStatus="端末内の本文を削除しました（NASの原本は保持）";
                 shelf();
             }).show();
@@ -1347,24 +1409,272 @@ public final class MainActivity extends Activity {
             }finally{tmp.delete();}
         },"epub-import").start();
     }
+
+    private String currentBookId(){
+        return openedFolder==null?"":openedFolder.getName();
+    }
+    private String scrollKey(int chapterNumber){
+        return "scroll_"+currentBookId()+"_"+chapterNumber;
+    }
+    private int readerChapterCount(){
+        JSONArray chapters=openedBook==null?null:openedBook.optJSONArray("chapters");
+        return chapters==null?0:chapters.length();
+    }
+    private int currentMaxScroll(){
+        if(reader==null)return 0;
+        return Math.max(0,Math.round(reader.getContentHeight()*reader.getScale())-reader.getHeight());
+    }
+    private int currentScroll(){
+        return reader==null?0:Math.max(0,reader.getScrollY());
+    }
+    private void rememberReaderPosition(){
+        if(reader==null||openedBook==null||restoringScroll)return;
+        getPreferences(0).edit()
+            .putInt("chapter_"+currentBookId(),chapter)
+            .putInt(scrollKey(chapter),currentScroll()).apply();
+    }
+    @Override protected void onPause(){
+        rememberReaderPosition();
+        super.onPause();
+    }
+    private void updateProgress(){
+        if(readingProgress==null||openedBook==null)return;
+        int count=readerChapterCount();
+        if(count==0)return;
+        int max=Math.max(1,currentMaxScroll());
+        float share=Math.min(1f,(float)currentScroll()/max);
+        int percent=Math.max(0,Math.min(100,Math.round(100f*(chapter+share)/count)));
+        readingProgress.setText((chapter+1)+" / "+count+"  ·  "+percent+"%");
+        if(bookmarkControl!=null)
+            bookmarkControl.setText(hasNearbyBookmark()?"◆":"◇");
+    }
+    private String bookmarkKey(){
+        return "bookmarks_"+currentBookId();
+    }
+    private JSONArray bookmarks(){
+        if(openedBook==null)return new JSONArray();
+        try{return new JSONArray(getSharedPreferences("reader_marks_v1",MODE_PRIVATE)
+                    .getString(bookmarkKey(),"[]"));}
+        catch(Exception e){return new JSONArray();}
+    }
+    private void storeBookmarks(JSONArray marks){
+        getSharedPreferences("reader_marks_v1",MODE_PRIVATE).edit()
+            .putString(bookmarkKey(),marks.toString()).apply();
+    }
+    private boolean hasNearbyBookmark(){
+        JSONArray marks=bookmarks();
+        for(int i=0;i<marks.length();i++){
+            JSONObject entry=marks.optJSONObject(i);
+            if(entry!=null&&entry.optInt("ch",-1)==chapter
+                &&Math.abs(entry.optInt("y",-10000)-currentScroll())<d(130))
+                return true;
+        }
+        return false;
+    }
+    private void toggleBookmark(){
+        if(openedBook==null)return;
+        JSONArray old=bookmarks(),updated=new JSONArray();
+        boolean found=false;
+        for(int i=0;i<old.length();i++){
+            JSONObject mark=old.optJSONObject(i);
+            if(mark==null)continue;
+            if(mark.optInt("ch",-1)==chapter
+                    &&Math.abs(mark.optInt("y",-10000)-currentScroll())<d(130)){
+                found=true;
+                continue;
+            }
+            updated.put(mark);
+        }
+        if(!found){
+            if(updated.length()>=300){
+                Toast.makeText(this,"しおりの登録上限は300件です",Toast.LENGTH_SHORT).show();return;
+            }
+            try{
+                JSONObject mark=new JSONObject();
+                mark.put("ch",chapter);
+                mark.put("y",currentScroll());
+                mark.put("date",new java.text.SimpleDateFormat("MM/dd HH:mm",Locale.JAPAN)
+                    .format(new java.util.Date()));
+                updated.put(mark);
+            }catch(Exception e){return;}
+        }
+        storeBookmarks(updated);
+        updateProgress();
+        Toast.makeText(this,found?"しおりを解除しました":"この位置にしおりを付けました",
+            Toast.LENGTH_SHORT).show();
+    }
+    private void listBookmarks(){
+        JSONArray marks=bookmarks();
+        if(marks.length()==0){
+            new AlertDialog.Builder(this).setTitle("しおり")
+                .setMessage("まだしおりはありません。\n読書画面右上の ◇ を押すと現在位置に追加できます。")
+                .setPositiveButton("閉じる",null).show();
+            return;
+        }
+        String[] labels=new String[marks.length()];
+        for(int i=0;i<marks.length();i++){
+            JSONObject mark=marks.optJSONObject(i);
+            labels[i]=mark==null?"不明":("ページ / 章 "+(mark.optInt("ch",0)+1)
+                +"  ·  "+mark.optString("date","")+"  ·  位置 "+mark.optInt("y",0));
+        }
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle("しおり  ·  "+marks.length()+"件")
+            .setItems(labels,(d,which)->{
+                JSONObject mark=marks.optJSONObject(which);
+                if(mark!=null)pageAt(mark.optInt("ch",0),mark.optInt("y",0));
+            })
+            .setPositiveButton("閉じる",null).create();
+        dialog.setOnShowListener(v->dialog.getListView().setOnItemLongClickListener(
+            (parent,view,which,id)->{
+                JSONObject selected=marks.optJSONObject(which);
+                if(selected==null)return true;
+                new AlertDialog.Builder(this).setTitle("しおりを削除")
+                    .setMessage(labels[which])
+                    .setNegativeButton("キャンセル",null)
+                    .setPositiveButton("削除",(d,w)->{
+                        JSONArray keep=new JSONArray();
+                        for(int i=0;i<marks.length();i++)if(i!=which)
+                            keep.put(marks.optJSONObject(i));
+                        storeBookmarks(keep);
+                        dialog.dismiss();listBookmarks();
+                        updateProgress();
+                    }).show();
+                return true;
+            }));
+        dialog.show();
+    }
+    private void tableOfContents(){
+        JSONArray pages=openedBook==null?null:openedBook.optJSONArray("chapters");
+        if(pages==null||pages.length()==0)return;
+        String[] entries=new String[pages.length()];
+        for(int i=0;i<pages.length();i++){
+            String path=pages.optString(i,"");
+            String name=new File(path).getName()
+                .replaceFirst("(?i)\\.(xhtml|html|htm)$","");
+            entries[i]=String.format(Locale.JAPAN,"%03d  %s",i+1,name);
+        }
+        new AlertDialog.Builder(this).setTitle("目次・ページ一覧")
+            .setSingleChoiceItems(entries,Math.max(0,chapter),(dialog,which)->{
+                dialog.dismiss();
+                pageAt(which,0);
+            })
+            .setNegativeButton("閉じる",null).show();
+    }
+    private void searchInChapter(){
+        if(reader==null)return;
+        final EditText term=new EditText(this);
+        term.setSingleLine(true);
+        term.setText(activeSearch);
+        term.setHint("検索する単語を入力");
+        term.setPadding(d(20),d(16),d(20),d(16));
+        new AlertDialog.Builder(this).setTitle("現在のページ・章を検索")
+            .setView(term)
+            .setNegativeButton("キャンセル",null)
+            .setNeutralButton("検索を終了",(dialog,which)->{
+                activeSearch="";
+                if(reader!=null)reader.clearMatches();
+            })
+            .setPositiveButton("検索",(dialog,which)->{
+                activeSearch=term.getText().toString().trim();
+                if(!activeSearch.isEmpty()&&reader!=null){
+                    reader.findAllAsync(activeSearch);
+                    showSearchNavigation();
+                }
+            }).show();
+    }
+    private void showSearchNavigation(){
+        if(reader==null||activeSearch.isEmpty())return;
+        new AlertDialog.Builder(this).setTitle("検索中: "+activeSearch)
+            .setMessage("現在のページ・章の一致箇所を移動します。")
+            .setNeutralButton("前を検索",(dialog,which)->{
+                if(reader!=null){reader.findNext(false);showSearchNavigation();}
+            })
+            .setPositiveButton("次を検索",(dialog,which)->{
+                if(reader!=null){reader.findNext(true);showSearchNavigation();}
+            })
+            .setNegativeButton("終了",(dialog,which)->{
+                activeSearch="";if(reader!=null)reader.clearMatches();
+            }).show();
+    }
+    private String backgroundHtmlColor(){
+        return readerTheme==2?"#151D22":readerTheme==1?"#F2E9D5":"#FAFBF8";
+    }
+    private String foregroundHtmlColor(){
+        return readerTheme==2?"#E3E8E5":readerTheme==1?"#453A2D":"#24332D";
+    }
+    private int readingBackground(){
+        return readerTheme==2?Color.rgb(21,29,34)
+            :readerTheme==1?Color.rgb(242,233,213):Color.rgb(250,251,248);
+    }
+    private String readerStyle(){
+        int margin=readerMargin==0?9:readerMargin==2?27:17;
+        return "<style data-reader-style='1'>"
+            +"html,body{background-color:"+backgroundHtmlColor()+" !important;"
+            +"color:"+foregroundHtmlColor()+" !important;}"
+            +"body{line-height:1.65 !important;margin:"+margin+"px !important;}"
+            +"a{color:"+(readerTheme==2?"#9ECBBC":"#347F6C")+" !important;}"
+            +"</style>";
+    }
+    private void loadThemedChapter(File f){
+        if(reader==null)return;
+        reader.setBackgroundColor(readingBackground());
+        try{
+            if(f.length()>0&&f.length()<6L*1024*1024){
+                String html=new String(readFile(f,6*1024*1024),StandardCharsets.UTF_8);
+                String style=readerStyle();
+                if(html.matches("(?is).*<head(?:\\s[^>]*)?>.*"))
+                    html=html.replaceFirst("(?i)<head(\\s[^>]*)?>","<head$1>"+style);
+                else if(html.matches("(?is).*<html(?:\\s[^>]*)?>.*"))
+                    html=html.replaceFirst("(?i)<html(\\s[^>]*)?>","<html$1><head>"+style+"</head>");
+                else html="<html><head>"+style+"</head><body>"+html+"</body></html>";
+                reader.loadDataWithBaseURL(Uri.fromFile(f).toString(),html,
+                    "text/html","UTF-8",null);
+                return;
+            }
+        }catch(Exception ignored){}
+        reader.loadUrl(Uri.fromFile(f).toString());
+    }
     private void open(JSONObject book){
-        openedBook=book;openedFolder=new File(library,book.optString("id"));
-        chapter=getPreferences(0).getInt("chapter_"+openedFolder.getName(),0);
+        openedBook=book;
+        openedFolder=new File(library,book.optString("id"));
+        chapter=getPreferences(0).getInt("chapter_"+currentBookId(),0);
+        readerTheme=getPreferences(0).getInt("reader_theme",0);
+        readerMargin=getPreferences(0).getInt("reader_margin",1);
         screen();
-        LinearLayout top=layout(true);top.setPadding(d(8),d(4),d(8),d(4));
-        top.addView(button("← 本棚",v->shelf()));
-        TextView title=text(book.optString("title",""),14,true);title.setSingleLine(true);
-        top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        root.setBackgroundColor(readingBackground());
+        LinearLayout top=layout(true);
+        top.setPadding(d(12),d(8),d(12),d(9));
+        top.setBackgroundColor(readingBackground());
+        TextView back=actionIcon("‹");
+        top.addView(back,new LinearLayout.LayoutParams(d(42),d(42)));
+        back.setOnClickListener(v->{rememberReaderPosition();shelf();});
+        LinearLayout titleGroup=layout(false);
+        titleGroup.setPadding(d(10),0,0,0);
+        TextView title=text(book.optString("title","本を読む"),15,true);
+        if(readerTheme==2)title.setTextColor(Color.rgb(228,233,230));
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleGroup.addView(title);
+        TextView modeLabel=subtle("READING MODE",10);
+        if(readerTheme==2)modeLabel.setTextColor(Color.rgb(161,178,170));
+        titleGroup.addView(modeLabel);
+        top.addView(titleGroup,new LinearLayout.LayoutParams(0,-2,1));
+        bookmarkControl=actionIcon("◇");
+        bookmarkControl.setTextColor(readerTheme==2?Color.rgb(186,228,205):accent);
+        bookmarkControl.setOnClickListener(v->toggleBookmark());
+        bookmarkControl.setOnLongClickListener(v->{listBookmarks();return true;});
+        top.addView(bookmarkControl,new LinearLayout.LayoutParams(d(42),d(42)));
         root.addView(top);
         reader=new WebView(this);
-        reader.setBackgroundColor(Color.WHITE);
+        reader.setBackgroundColor(readingBackground());
         reader.getSettings().setJavaScriptEnabled(false);
         reader.getSettings().setAllowFileAccess(true);
         reader.getSettings().setAllowContentAccess(false);
         reader.getSettings().setBlockNetworkLoads(true);
         reader.getSettings().setTextZoom(fontSize);
         final String prefix;
-        try{prefix=openedFolder.getCanonicalPath()+File.separator;}catch(Exception e){shelf();return;}
+        try{prefix=openedFolder.getCanonicalPath()+File.separator;}
+        catch(Exception e){shelf();return;}
         reader.setWebViewClient(new WebViewClient(){
             @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){
                 Uri u=r.getUrl();
@@ -1375,36 +1685,157 @@ public final class MainActivity extends Activity {
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){
                 String scheme=r.getUrl().getScheme();
                 if("http".equals(scheme)||"https".equals(scheme))
-                    return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));
+                    return new WebResourceResponse("text/plain","UTF-8",
+                        new ByteArrayInputStream(new byte[0]));
                 return null;
             }
+            @Override public void onPageFinished(WebView v,String url){
+                super.onPageFinished(v,url);
+                final int restore=pendingScroll;
+                restoringScroll=true;
+                v.postDelayed(()->{
+                    if(reader!=v)return;
+                    v.scrollTo(0,restore);
+                    updateProgress();
+                    v.postDelayed(()->{
+                        if(reader!=v)return;
+                        v.scrollTo(0,restore);
+                        restoringScroll=false;
+                        updateProgress();
+                    },210);
+                },170);
+            }
+        });
+        reader.setOnScrollChangeListener((v,x,y,oldX,oldY)->{
+            if(!restoringScroll){
+                long now=SystemClock.elapsedRealtime();
+                if(now-lastPositionSave>=900){
+                    rememberReaderPosition();
+                    lastPositionSave=now;
+                }
+            }
+            updateProgress();
         });
         root.addView(reader,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout buttons=layout(true);buttons.setGravity(Gravity.CENTER);
-        buttons.addView(button("前の章",v->page(chapter-1)));
-        buttons.addView(button("A−",v->zoom(-10)));
-        buttons.addView(button("A＋",v->zoom(10)));
-        buttons.addView(button("次の章",v->page(chapter+1)));
-        root.addView(buttons,new LinearLayout.LayoutParams(-1,d(62)));
-        page(chapter);
+        LinearLayout toolbar=layout(true);
+        toolbar.setPadding(d(12),d(8),d(12),d(8));
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setBackgroundColor(readingBackground());
+        TextView previous=actionIcon("‹");
+        previous.setOnClickListener(v->pageAt(chapter-1,0));
+        toolbar.addView(previous,new LinearLayout.LayoutParams(d(42),d(43)));
+        readingProgress=subtle("1 / 1",12);
+        readingProgress.setGravity(Gravity.CENTER);
+        if(readerTheme==2)readingProgress.setTextColor(Color.rgb(188,203,195));
+        toolbar.addView(readingProgress,new LinearLayout.LayoutParams(0,-2,1));
+        TextView next=actionIcon("›");
+        next.setOnClickListener(v->pageAt(chapter+1,0));
+        toolbar.addView(next,new LinearLayout.LayoutParams(d(42),d(43)));
+        root.addView(toolbar);
+        LinearLayout actions=layout(true);
+        actions.setPadding(d(12),0,d(12),d(14));
+        actions.setBackgroundColor(readingBackground());
+        Button toc=button("目次",v->tableOfContents());
+        Button marks=button("しおり",v->listBookmarks());
+        Button find=button("検索",v->searchInChapter());
+        Button settings=button("Aa",v->showReadingAppearance());
+        Button[] controls={toc,marks,find,settings};
+        for(int i=0;i<controls.length;i++){
+            LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,d(43),1);
+            if(i>0)params.leftMargin=d(7);
+            actions.addView(controls[i],params);
+        }
+        root.addView(actions);
+        int count=readerChapterCount();
+        if(count<=0){
+            new AlertDialog.Builder(this).setTitle("本文を表示できません")
+                .setMessage("このEPUBには読み取れる本文がありません。")
+                .setPositiveButton("本棚へ戻る",(dialog,which)->shelf()).show();
+            return;
+        }
+        chapter=Math.max(0,Math.min(chapter,count-1));
+        pageAt(chapter,getPreferences(0).getInt(scrollKey(chapter),0));
+    }
+    private void showReadingAppearance(){
+        final String[] themes={"ライト — やわらかい白","セピア — 紙のような色","ダーク — 夜間向け"};
+        LinearLayout panel=layout(false);
+        panel.setPadding(d(18),d(8),d(18),d(6));
+        panel.addView(text("背景テーマ",14,true));
+        final android.widget.RadioGroup themeChoices=new android.widget.RadioGroup(this);
+        for(int i=0;i<themes.length;i++){
+            android.widget.RadioButton radio=new android.widget.RadioButton(this);
+            radio.setText(themes[i]);
+            radio.setId(5000+i);
+            radio.setTextSize(14);
+            themeChoices.addView(radio);
+        }
+        themeChoices.check(5000+readerTheme);
+        panel.addView(themeChoices);
+        TextView fontDisplay=text("文字サイズ  "+fontSize+"%",14,true);
+        fontDisplay.setPadding(0,d(16),0,d(6));
+        panel.addView(fontDisplay);
+        android.widget.SeekBar slider=new android.widget.SeekBar(this);
+        slider.setMax(110);slider.setProgress(fontSize-70);
+        slider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(android.widget.SeekBar bar,int n,boolean user){
+                fontDisplay.setText("文字サイズ  "+(70+n)+"%");
+            }
+            public void onStartTrackingTouch(android.widget.SeekBar bar){}
+            public void onStopTrackingTouch(android.widget.SeekBar bar){}
+        });
+        panel.addView(slider);
+        final String[] margins={"狭い","標準","広い"};
+        android.widget.Spinner spacing=new android.widget.Spinner(this);
+        spacing.setAdapter(new android.widget.ArrayAdapter<String>(this,
+            android.R.layout.simple_spinner_dropdown_item,margins));
+        spacing.setSelection(readerMargin);
+        panel.addView(text("余白",14,true));
+        panel.addView(spacing);
+        new AlertDialog.Builder(this).setTitle("読書の表示設定").setView(panel)
+            .setNegativeButton("キャンセル",null)
+            .setPositiveButton("適用",(dialog,which)->{
+                rememberReaderPosition();
+                readerTheme=themeChoices.getCheckedRadioButtonId()-5000;
+                readerTheme=Math.max(0,Math.min(2,readerTheme));
+                fontSize=70+slider.getProgress();
+                readerMargin=spacing.getSelectedItemPosition();
+                getPreferences(0).edit()
+                    .putInt("reader_theme",readerTheme)
+                    .putInt("reader_margin",readerMargin)
+                    .putInt("fontSize",fontSize).apply();
+                open(openedBook);
+            }).show();
     }
     private void zoom(int change){
         fontSize=Math.max(70,Math.min(180,fontSize+change));
         getPreferences(0).edit().putInt("fontSize",fontSize).apply();
         if(reader!=null)reader.getSettings().setTextZoom(fontSize);
     }
-    private void page(int n){
+    private void page(int n){pageAt(n,0);}
+    private void pageAt(int n,int y){
         if(reader==null||openedBook==null)return;
         JSONArray pages=openedBook.optJSONArray("chapters");
         if(pages==null||n<0||n>=pages.length())return;
         File f=new File(openedFolder,pages.optString(n));
         try{
             if(!f.getCanonicalPath().startsWith(openedFolder.getCanonicalPath()+File.separator))return;
+            if(chapter!=n)rememberReaderPosition();
             chapter=n;
-            getPreferences(0).edit().putInt("chapter_"+openedFolder.getName(),chapter).apply();
-            reader.loadUrl(Uri.fromFile(f).toString());
-        }catch(Exception e){Toast.makeText(this,"章を開けません",Toast.LENGTH_SHORT).show();}
+            pendingScroll=Math.max(0,y);
+            restoringScroll=true;
+            getPreferences(0).edit().putInt("chapter_"+currentBookId(),chapter).apply();
+            if(!activeSearch.isEmpty()){
+                activeSearch="";
+                reader.clearMatches();
+            }
+            loadThemedChapter(f);
+            updateProgress();
+        }catch(Exception e){
+            restoringScroll=false;
+            Toast.makeText(this,"本文を開けません",Toast.LENGTH_SHORT).show();
+        }
     }
+
     private static byte[] readFile(File file,int max)throws Exception{
         try(InputStream in=new FileInputStream(file);ByteArrayOutputStream out=new ByteArrayOutputStream()){
             byte[] buf=new byte[4096];int n;
@@ -1421,7 +1852,7 @@ public final class MainActivity extends Activity {
         else if(folderBrowserVisible){
             if(folderBrowserPath.isEmpty())leaveBrowser();
             else loadFolder(parentFolder(folderBrowserPath));
-        }else if(openedBook!=null)shelf();
+        }else if(openedBook!=null){rememberReaderPosition();shelf();}
         else super.onBackPressed();
     }
 }

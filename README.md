@@ -1,4 +1,20 @@
-# NAS EPUB Reader — v0.4.5 refreshed library UI
+# NAS EPUB Reader — v0.4.6 refined library and reading tools
+
+## v0.4.6 — Reading experience refresh
+- Remove the verbose embedded Tailscale route explanation from the top of the library; keep Tailscale settings/diagnostics inside the left navigation drawer.
+- Show only the selected NAS folder in a small unobtrusive library breadcrumb. Show transfer progress or errors when meaningful.
+- Add library title/author search, keeping the 3-column downloaded/NAS grid design.
+- Add **multiple persistent bookmarks per book**, captured at chapter/file and scroll offset, toggle via top-right diamond, list and jump from bottom "しおり" button. Long press bookmark entry to remove it.
+- Add a **table of contents/section list** based on the EPUB's spine; jump to the selected internal HTML file. Actual semantic chapter names depend on EPUB content.
+- Add **current HTML section text search** via WebView built-in find, with previous/next results.
+- Save the current reading section and scroll offset per book, auto-restore on reopening; show approximate chapter-relative reading percentage and position.
+- Add reading appearance dialog (Aa): light/sepia/dark backgrounds, font size 70–180%, and narrow/normal/wide text margins, using injected CSS for XHTML/HTML files up to 6MB.
+- Keep EPUB JavaScript disabled; external network loads blocked, file URL navigation restricted to the extracted book folder.
+- Keep offline reading, SMB/Tailscale, lightweight cover cache and Wi-Fi-only body downloading.
+- Limitations: bookmarks track chapter/file plus vertical scroll pixels (may shift when layout/font changes), section search is not whole-book search, publisher CSS can override some appearance details, no cloud synchronization/annotations yet.
+- Older debug APK signatures may differ and require uninstalling before installation, which deletes app-private data.
+
+## Previous version: v0.4.5 refreshed library UI
 
 ## v0.4.5 — Design refresh
 - Introduce a simple, soft-white/teal bookshelf interface, rounded cards and subtler status area.

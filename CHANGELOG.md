@@ -1,4 +1,13 @@
 # Changelog
+## v0.4.6
+- Remove Tailscale route text from library main header; keep network controls in the drawer.
+- Add persistent per-book multi-bookmark and bookmark navigation.
+- Add EPUB spine-based table of contents and current-section find.
+- Restore section + scroll position, report reading progress.
+- Add light, sepia and dark reading themes, font size and margin preferences.
+- Add library search by title/author and refine reading toolbar.
+- Maintain proven 3-column bookshelf, cached covers and Wi-Fi-only EPUB downloads.
+
 ## v0.4.5
 - New navigation sidebar with common settings and actions.
 - Three-column vertical-scroll grid for book covers and metadata.
