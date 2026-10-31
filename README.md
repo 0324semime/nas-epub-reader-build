@@ -1,4 +1,18 @@
-# NAS EPUB Reader — v0.4.4 Wi-Fi-only books and long-press menu
+# NAS EPUB Reader — v0.4.5 refreshed library UI
+
+## v0.4.5 — Design refresh
+- Introduce a simple, soft-white/teal bookshelf interface, rounded cards and subtler status area.
+- **Hamburger menu** (top left) with library, refresh, NAS settings, folder browser, embedded Tailscale, EPUB import, reading preferences, cover cache manager, hidden-book recovery and app information.
+- Simplify header to hamburger, library title and refresh button.
+- **Three books per row** in a vertically scrolling grid.
+- Split books into **保存済み** (downloaded and local EPUBs) and **NASの本** (remote EPUBs not downloaded).
+- Each grid item has cover artwork, local/NAS status chip, up to two title lines, author, tap, and long-press menu.
+- Persist old navigation and book controls: local offline reading, lightweight cover preview, SMB over embedded Tailscale, and Wi-Fi-only full book downloads.
+- Reading preferences dialog stores preferred text size; cache management can delete preview covers while preserving downloaded books and NAS originals.
+- Hide/restore controls are accessible from the sidebar, without requiring a banner.
+- EPUB on NAS is still read-only; local deletion never removes the NAS original.
+
+## Previous version: v0.4.4 Wi-Fi-only books and long-press menu
 
 ## v0.4.4
 - **Full book EPUB transfers are manual and allowed only on an active Wi-Fi network.** Mobile data (5G/LTE) can still browse the NAS, obtain small EPUB cover previews and display previously downloaded books.

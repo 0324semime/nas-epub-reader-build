@@ -1,4 +1,11 @@
 # Changelog
+## v0.4.5
+- New navigation sidebar with common settings and actions.
+- Three-column vertical-scroll grid for book covers and metadata.
+- Separate saved EPUBs from NAS-only books, with distinct status chips.
+- Refresh typography, backgrounds, card appearance and empty-state screens.
+- Maintain Tailscale SMB access, Wi-Fi-only download, offline reading and book long-press actions.
+
 ## v0.4.4
 - Wi-Fi-gate every full EPUB download before and during SMB transfers, leaving cellular data for previews.
 - Replace tap-to-download with cover long-press action menu.

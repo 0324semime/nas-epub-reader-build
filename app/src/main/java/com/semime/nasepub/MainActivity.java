@@ -2,6 +2,10 @@ package com.semime.nasepub;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
+import android.graphics.drawable.GradientDrawable;
+import android.view.Window;
+import android.view.WindowManager;
 import android.content.Intent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -41,7 +45,11 @@ import java.util.*;
 /** Offline EPUB bookshelf and reader. SMB and embedded Tailscale follow in later releases. */
 public final class MainActivity extends Activity {
     private static final int PICK = 902;
-    private final int background = Color.rgb(248,247,244);
+    private final int background = Color.rgb(247,249,247);
+    private final int surface = Color.WHITE;
+    private final int accent = Color.rgb(36,110,91);
+    private final int accentSoft = Color.rgb(224,242,233);
+    private final int subText = Color.rgb(107,121,118);
     private final int ink = Color.rgb(32,45,56);
     private File library, previews, openedFolder;
     private JSONObject openedBook;
@@ -95,7 +103,12 @@ public final class MainActivity extends Activity {
     }
     private Button button(String title, View.OnClickListener fn) {
         Button v=new Button(this);
-        v.setText(title);v.setTextSize(13);v.setAllCaps(false);v.setOnClickListener(fn);
+        v.setText(title);v.setTextSize(13);v.setAllCaps(false);
+        v.setTextColor(accent);
+        v.setBackground(rounded(Color.rgb(231,239,234),12));
+        v.setMinHeight(d(43));
+        v.setPadding(d(10),d(5),d(10),d(5));
+        v.setOnClickListener(fn);
         return v;
     }
     private void screen() {
@@ -127,89 +140,382 @@ public final class MainActivity extends Activity {
         Collections.sort(books, Comparator.comparing(x->x.optString("title","")));
         return books;
     }
+    private GradientDrawable rounded(int color,int radius){
+        GradientDrawable shape=new GradientDrawable();
+        shape.setColor(color);shape.setCornerRadius(d(radius));
+        return shape;
+    }
+    private GradientDrawable bordered(int color,int radius,int stroke){
+        GradientDrawable shape=rounded(color,radius);
+        shape.setStroke(d(1),stroke);
+        return shape;
+    }
+    private TextView actionIcon(String label){
+        TextView view=text(label,23,false);
+        view.setGravity(Gravity.CENTER);
+        view.setBackground(rounded(Color.rgb(240,244,242),13));
+        return view;
+    }
+    private TextView subtle(String value,int size){
+        TextView view=text(value,size,false);
+        view.setTextColor(subText);
+        return view;
+    }
+    private TextView statusChip(String label,boolean saved){
+        TextView view=text(label,10,true);
+        view.setTextColor(saved?accent:Color.rgb(79,104,125));
+        view.setBackground(rounded(saved?accentSoft:Color.rgb(233,239,247),20));
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(d(8),d(4),d(8),d(4));
+        return view;
+    }
+    private int countUndownloaded(){
+        int count=0;
+        for(SmbRepository.RemoteBook item:nasBooks){
+            if(!isHidden(remoteId(item.path)) && cachedRemote(item)==null)count++;
+        }
+        return count;
+    }
     private void shelf(){
         folderBrowserVisible=false;
         tailnetPanelVisible=false;
         ++folderBrowserRevision;
         openedBook=null;openedFolder=null;screen();
-        LinearLayout bar=layout(true);bar.setPadding(d(14),d(10),d(12),d(6));
-        TextView title=text("My EPUB Library",22,true);
-        bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        bar.addView(button("＋ EPUB追加",v->pick()));
-        root.addView(bar);
-        TextView note=text("v0.4.4  /  本文はWi-Fiで手動保存",12,false);
-        note.setPadding(d(16),0,d(8),d(6));root.addView(note);
-        LinearLayout smbBar=layout(true);
-        smbBar.setPadding(d(8),0,d(8),d(4));
-        smbBar.addView(button("接続設定",v->showSmbSettings()));
-        smbBar.addView(button("フォルダ選択",v->startFolderBrowser()));
-        smbBar.addView(button("本棚更新",v->refreshNas()));
-        root.addView(smbBar);
-        LinearLayout netBar=layout(true);netBar.setPadding(d(10),0,d(10),d(1));
-        netBar.addView(button("内蔵Tailscale設定",v->showTailnetPanel()));
-        TextView netState=text("接続経路: "+EmbeddedTailnet.routeDescription(smbSettings.host),12,false);
-        netBar.addView(netState);
-        root.addView(netBar);
-        TextView smbState=text(nasStatus,12,false);
-        smbState.setPadding(d(16),0,d(12),d(6));
-        root.addView(smbState);
-        nasStatusView=smbState;
-        TextView selected=text(smbPreferences.hasFolderSelection()
-          ? "📁 読み取り先: " + smbSettings.share
-            + (smbSettings.folder.isEmpty() ? " （共有の直下）" : "\\" + smbSettings.folder)
-          : "📁 読み取りフォルダが未設定です。まず「フォルダ選択」を押してください。",12,false);
-        selected.setPadding(d(16),0,d(12),d(10));
-        root.addView(selected);
-        int hiddenCount=getHiddenIds().size();
-        if(hiddenCount>0)root.addView(button("非表示の本を戻す（"+hiddenCount+"冊）",v->{
-            new AlertDialog.Builder(this).setTitle("非表示の本を再表示")
-                .setMessage("この端末で非表示にした本をすべて本棚に戻します。NASのファイルは変更しません。")
-                .setNegativeButton("キャンセル",null)
-                .setPositiveButton("再表示",(dialog,which)->{
-                    getSharedPreferences("hidden_books_v1",MODE_PRIVATE)
-                        .edit().remove("hidden").apply();
-                    shelf();
-                }).show();
-        }));
+        // Compact header: navigation, bookshelf name, and one refresh action.
+        LinearLayout header=layout(true);
+        header.setPadding(d(16),d(18),d(16),d(12));
+        TextView menu=actionIcon("☰");
+        header.addView(menu,new LinearLayout.LayoutParams(d(46),d(46)));
+        menu.setOnClickListener(v->showLibraryDrawer());
+        LinearLayout titles=layout(false);titles.setPadding(d(13),0,0,0);
+        TextView heading=text("マイライブラリ",21,true);
+        titles.addView(heading);
+        titles.addView(subtle("NAS EPUB READER  ·  v0.4.5",10));
+        header.addView(titles,new LinearLayout.LayoutParams(0,-2,1));
+        TextView refresh=actionIcon("↻");
+        header.addView(refresh,new LinearLayout.LayoutParams(d(46),d(46)));
+        refresh.setOnClickListener(v->refreshNas());
+        root.addView(header);
+
         ScrollView scroll=new ScrollView(this);
-        LinearLayout list=layout(false);list.setPadding(d(12),0,d(12),d(20));
-        scroll.addView(list);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        renderRemoteBooks(list);
-        List<JSONObject> books=readBooks();
-        if(books.isEmpty() && nasBooks.isEmpty()){
-            TextView empty=text("まだ本がありません。\n「＋ EPUB追加」からEPUBを選択してください。",16,false);
-            empty.setPadding(d(20),d(80),d(20),0);
-            empty.setGravity(Gravity.CENTER);list.addView(empty);
-        }
-        for(int start=0;start<books.size();start+=2){
-            LinearLayout row=layout(true);row.setGravity(Gravity.TOP);list.addView(row);
-            for(int j=start;j<Math.min(start+2,books.size());j++){
-                final JSONObject book=books.get(j);
-                LinearLayout card=layout(false);card.setPadding(d(8),d(8),d(8),d(16));
-                row.addView(card,new LinearLayout.LayoutParams(0,-2,1));
-                ImageView image=new ImageView(this);
-                image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                image.setBackgroundColor(Color.rgb(225,229,231));
-                File cover=new File(new File(library,book.optString("id")),book.optString("cover"));
-                if(!book.optString("cover").isEmpty() && cover.isFile()){
-                    BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=2;
-                    Bitmap bmp=BitmapFactory.decodeFile(cover.getAbsolutePath(),options);
-                    if(bmp!=null)image.setImageBitmap(bmp);
+        scroll.setFillViewport(true);
+        scroll.setVerticalScrollBarEnabled(false);
+        LinearLayout page=layout(false);
+        page.setPadding(d(16),0,d(16),d(28));
+        scroll.addView(page);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+
+        // A small status panel rather than multiple large setting buttons.
+        LinearLayout status=layout(false);
+        status.setPadding(d(14),d(11),d(14),d(11));
+        status.setBackground(bordered(surface,16,Color.rgb(230,235,232)));
+        String folderText=smbPreferences.hasFolderSelection()
+            ?smbSettings.share+(smbSettings.folder.isEmpty()?"":" / "+smbSettings.folder.replace('\\','/'))
+            :"フォルダ未選択";
+        TextView location=text("▣  "+folderText,12,true);
+        location.setMaxLines(2);
+        status.addView(location);
+        TextView network=subtle(EmbeddedTailnet.enabled()
+            ?"●  Tailscale経由で接続":"●  ローカルネットワーク",11);
+        network.setTextColor(accent);
+        network.setPadding(0,d(5),0,0);
+        status.addView(network);
+        TextView state=subtle(nasStatus,11);
+        state.setMaxLines(3);
+        state.setPadding(0,d(5),0,0);
+        status.addView(state);
+        nasStatusView=state;
+        page.addView(status);
+
+        List<JSONObject> downloaded=readBooks();
+        List<SmbRepository.RemoteBook> notSaved=new ArrayList<>();
+        for(SmbRepository.RemoteBook remote:nasBooks)
+            if(!isHidden(remoteId(remote.path)) && cachedRemote(remote)==null)
+                notSaved.add(remote);
+        notSaved.sort(Comparator.comparing(x->x.name.toLowerCase(Locale.ROOT)));
+
+        addShelfHeading(page,"保存済み",downloaded.size(),"オフラインで読める本");
+        if(downloaded.isEmpty()){
+            addEmptyShelf(page,"保存済みの本はまだありません",
+                "Wi-Fiで本文をダウンロードすると、ここに並びます。");
+        }else{
+            for(int pos=0;pos<downloaded.size();pos+=3){
+                LinearLayout row=layout(true);
+                row.setGravity(Gravity.TOP);
+                page.addView(row);
+                for(int i=0;i<3;i++){
+                    LinearLayout.LayoutParams cell=new LinearLayout.LayoutParams(0,-2,1);
+                    if(i>0)cell.leftMargin=d(9);
+                    if(pos+i<downloaded.size())addSavedCard(row,downloaded.get(pos+i),cell);
+                    else{
+                        View filler=new View(this);
+                        row.addView(filler,cell);
+                    }
                 }
-                card.addView(image,new LinearLayout.LayoutParams(-1,d(190)));
-                TextView name=text(book.optString("title","名称未設定"),15,true);
-                name.setMaxLines(2);card.addView(name);
-                TextView author=text(book.optString("author",""),12,false);author.setMaxLines(1);card.addView(author);
-                card.setOnClickListener(v->open(book));
-                card.setOnLongClickListener(v->{
-                    String source=book.optString("source","");
-                    SmbRepository.RemoteBook remote=source.isEmpty()?null
-                        :new SmbRepository.RemoteBook(book.optString("title",""),source);
-                    showBookMenu(remote,book,null);
-                    return true;
-                });
             }
         }
+
+        addShelfHeading(page,"NASの本",notSaved.size(),"表紙を長押しして操作");
+        if(notSaved.isEmpty()){
+            addEmptyShelf(page,"未ダウンロードの本はありません",
+                nasBooks.isEmpty()?"右上の更新からNASの本を探せます。"
+                    :"すべての本を保存済みです。");
+        }else{
+            for(int pos=0;pos<notSaved.size();pos+=3){
+                LinearLayout row=layout(true);
+                row.setGravity(Gravity.TOP);
+                page.addView(row);
+                for(int i=0;i<3;i++){
+                    LinearLayout.LayoutParams cell=new LinearLayout.LayoutParams(0,-2,1);
+                    if(i>0)cell.leftMargin=d(9);
+                    if(pos+i<notSaved.size())addNasCard(row,notSaved.get(pos+i),cell);
+                    else row.addView(new View(this),cell);
+                }
+            }
+        }
+        if(nasBooks.isEmpty()&&!smbPreferences.hasFolderSelection()){
+            TextView setup=text("左上の ☰ → NAS接続設定 → 読み取りフォルダ選択から始められます。",12,false);
+            setup.setTextColor(subText);
+            setup.setPadding(d(5),d(12),d(5),d(12));
+            page.addView(setup);
+        }
+    }
+
+    private void addShelfHeading(LinearLayout page,String title,int count,String description){
+        LinearLayout line=layout(true);
+        line.setPadding(d(2),d(24),d(2),d(11));
+        TextView heading=text(title,18,true);
+        line.addView(heading);
+        TextView number=statusChip(count+"冊",true);
+        LinearLayout.LayoutParams badge=new LinearLayout.LayoutParams(-2,-2);
+        badge.leftMargin=d(9);
+        line.addView(number,badge);
+        page.addView(line);
+        TextView sub=subtle(description,11);
+        sub.setPadding(d(2),0,d(2),d(12));
+        page.addView(sub);
+    }
+    private void addEmptyShelf(LinearLayout page,String headline,String detail){
+        LinearLayout empty=layout(false);
+        empty.setGravity(Gravity.CENTER);
+        empty.setPadding(d(12),d(24),d(12),d(24));
+        empty.setBackground(bordered(Color.WHITE,15,Color.rgb(230,235,232)));
+        TextView text=text(headline,13,true);
+        text.setGravity(Gravity.CENTER);
+        empty.addView(text);
+        TextView explain=subtle(detail,11);
+        explain.setGravity(Gravity.CENTER);
+        explain.setPadding(0,d(7),0,0);
+        empty.addView(explain);
+        page.addView(empty);
+    }
+    private LinearLayout bookCardBase(LinearLayout row,LinearLayout.LayoutParams params){
+        LinearLayout card=layout(false);
+        card.setPadding(d(6),d(6),d(6),d(11));
+        card.setBackground(bordered(surface,14,Color.rgb(234,238,235)));
+        card.setElevation(d(2));
+        LinearLayout.LayoutParams outer=new LinearLayout.LayoutParams(params.width,params.height,params.weight);
+        outer.leftMargin=params.leftMargin;
+        outer.bottomMargin=d(10);
+        row.addView(card,outer);
+        return card;
+    }
+    private ImageView bookImage(File cover){
+        ImageView image=new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setBackground(rounded(Color.rgb(240,243,241),11));
+        if(cover!=null && cover.isFile()){
+            BitmapFactory.Options options=new BitmapFactory.Options();
+            options.inSampleSize=3;
+            Bitmap bmp=BitmapFactory.decodeFile(cover.getAbsolutePath(),options);
+            if(bmp!=null)image.setImageBitmap(bmp);
+        }
+        return image;
+    }
+    private void cardText(LinearLayout card,String name,String author,boolean saved){
+        TextView chip=statusChip(saved?"保存済み":"NAS",saved);
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);
+        cp.topMargin=d(7);
+        card.addView(chip,cp);
+        TextView bookTitle=text(name,12,true);
+        bookTitle.setMaxLines(2);
+        bookTitle.setMinLines(2);
+        bookTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams titleParam=new LinearLayout.LayoutParams(-1,-2);
+        titleParam.topMargin=d(6);
+        card.addView(bookTitle,titleParam);
+        TextView by=subtle(author,10);
+        by.setMaxLines(1);
+        by.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        card.addView(by);
+    }
+    private void addSavedCard(LinearLayout row,JSONObject book,LinearLayout.LayoutParams params){
+        LinearLayout card=bookCardBase(row,params);
+        String id=book.optString("id","");
+        String path=book.optString("cover","");
+        File cover=path.isEmpty()?null:new File(new File(library,id),path);
+        ImageView image=bookImage(cover);
+        card.addView(image,new LinearLayout.LayoutParams(-1,d(148)));
+        cardText(card,book.optString("title","名称未設定"),book.optString("author",""),true);
+        String source=book.optString("source","");
+        SmbRepository.RemoteBook remote=source.isEmpty()?null:
+            new SmbRepository.RemoteBook(book.optString("title",""),source);
+        View.OnClickListener onClick=v->open(book);
+        View.OnLongClickListener onLong=v->{
+            showBookMenu(remote,book,null);return true;
+        };
+        card.setOnClickListener(onClick);card.setOnLongClickListener(onLong);
+        image.setOnClickListener(onClick);image.setOnLongClickListener(onLong);
+    }
+    private void addNasCard(LinearLayout row,SmbRepository.RemoteBook remote,
+                            LinearLayout.LayoutParams params){
+        LinearLayout card=bookCardBase(row,params);
+        JSONObject info=cachedPreview(remote);
+        String title=info==null?remote.name:info.optString("title",remote.name);
+        String author=info==null?"":info.optString("author","");
+        String coverPath=info==null?"":info.optString("cover","");
+        File cover=coverPath.isEmpty()?null:new File(new File(previews,remoteId(remote.path)),coverPath);
+        ImageView image=bookImage(cover);
+        card.addView(image,new LinearLayout.LayoutParams(-1,d(148)));
+        cardText(card,title,author,false);
+        View.OnClickListener onClick=v->showPreviewTap(remote);
+        View.OnLongClickListener onLong=v->{
+            showBookMenu(remote,null,info);return true;
+        };
+        card.setOnClickListener(onClick);card.setOnLongClickListener(onLong);
+        image.setOnClickListener(onClick);image.setOnLongClickListener(onLong);
+    }
+    private void addDrawerItem(LinearLayout list,String symbol,String title,String description,
+                                Runnable action,Dialog dialog){
+        LinearLayout item=layout(true);
+        item.setPadding(d(17),d(12),d(12),d(12));
+        TextView ico=text(symbol,20,false);
+        ico.setGravity(Gravity.CENTER);
+        ico.setTextColor(accent);
+        item.addView(ico,new LinearLayout.LayoutParams(d(34),d(40)));
+        LinearLayout labels=layout(false);
+        labels.setPadding(d(10),0,0,0);
+        labels.addView(text(title,15,true));
+        TextView detail=subtle(description,11);
+        detail.setPadding(0,d(3),0,0);
+        labels.addView(detail);
+        item.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
+        list.addView(item);
+        View separator=new View(this);
+        separator.setBackgroundColor(Color.rgb(239,242,239));
+        list.addView(separator,new LinearLayout.LayoutParams(-1,d(1)));
+        item.setOnClickListener(v->{dialog.dismiss();action.run();});
+    }
+    private void showLibraryDrawer(){
+        Dialog dialog=new Dialog(this);
+        LinearLayout panel=layout(false);
+        panel.setBackgroundColor(Color.WHITE);
+        panel.setPadding(0,d(24),0,d(12));
+        TextView appTitle=text("  読書棚",24,true);
+        appTitle.setTextColor(accent);
+        panel.addView(appTitle);
+        TextView slogan=subtle("    NAS EPUB READER  ·  v0.4.5",11);
+        slogan.setPadding(0,d(5),0,d(20));
+        panel.addView(slogan);
+        ScrollView scroll=new ScrollView(this);
+        LinearLayout list=layout(false);
+        scroll.addView(list);
+        panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        addDrawerItem(list,"▦","本棚","保存済みとNASの本",()->shelf(),dialog);
+        addDrawerItem(list,"↻","NASの本を更新","フォルダ内のEPUBを再検索",()->refreshNas(),dialog);
+        addDrawerItem(list,"⌂","NAS接続設定","共有・ユーザー・パスワード",()->showSmbSettings(),dialog);
+        addDrawerItem(list,"▤","読み取りフォルダ選択","SMBフォルダを参照",()->startFolderBrowser(),dialog);
+        addDrawerItem(list,"◇","内蔵Tailscale","外出先接続と通信診断",()->showTailnetPanel(),dialog);
+        addDrawerItem(list,"＋","端末のEPUBを追加","ローカルファイルから取り込む",()->pick(),dialog);
+        addDrawerItem(list,"◷","読書設定","文字の大きさ",()->showReaderSettings(),dialog);
+        addDrawerItem(list,"▧","キャッシュ管理","表紙データの確認と削除",()->showCacheManager(),dialog);
+        addDrawerItem(list,"↺","非表示の本を戻す","この端末の非表示設定を解除",()->restoreHidden(),dialog);
+        addDrawerItem(list,"ⓘ","アプリ情報","バージョンと利用方法",()->showAppInfo(),dialog);
+        dialog.setContentView(panel);
+        Window window=dialog.getWindow();
+        if(window!=null){
+            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.setGravity(Gravity.START|Gravity.TOP);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes=window.getAttributes();
+            attributes.width=Math.min(d(340),(int)(getResources().getDisplayMetrics().widthPixels*0.86f));
+            attributes.height=WindowManager.LayoutParams.MATCH_PARENT;
+            attributes.dimAmount=0.43f;
+            window.setAttributes(attributes);
+        }
+        dialog.show();
+        Window shown=dialog.getWindow();
+        if(shown!=null){
+            shown.setBackgroundDrawableResource(android.R.color.transparent);
+            shown.setGravity(Gravity.START|Gravity.TOP);
+            shown.setLayout(Math.min(d(340),(int)(getResources().getDisplayMetrics().widthPixels*0.86f)),
+                WindowManager.LayoutParams.MATCH_PARENT);
+        }
+    }
+    private void restoreHidden(){
+        int count=getHiddenIds().size();
+        if(count==0){
+            Toast.makeText(this,"非表示の本はありません",Toast.LENGTH_SHORT).show();return;
+        }
+        new AlertDialog.Builder(this).setTitle("非表示の本を戻す")
+            .setMessage(count+"冊を本棚へ戻します。NASのファイルは変更されません。")
+            .setNegativeButton("キャンセル",null)
+            .setPositiveButton("戻す",(dialog,which)->{
+                getSharedPreferences("hidden_books_v1",MODE_PRIVATE)
+                    .edit().remove("hidden").apply();
+                shelf();
+            }).show();
+    }
+    private void showReaderSettings(){
+        final int[] sizes={80,90,100,110,125,150,175};
+        String[] options=new String[sizes.length];
+        int selected=0;
+        for(int i=0;i<sizes.length;i++){
+            options[i]="文字サイズ "+sizes[i]+"%";
+            if(Math.abs(fontSize-sizes[i])<Math.abs(fontSize-sizes[selected]))
+                selected=i;
+        }
+        new AlertDialog.Builder(this).setTitle("読書設定")
+            .setSingleChoiceItems(options,selected,(dialog,which)->{
+                fontSize=sizes[which];
+                getPreferences(0).edit().putInt("fontSize",fontSize).apply();
+                dialog.dismiss();
+                Toast.makeText(this,"文字サイズを保存しました",Toast.LENGTH_SHORT).show();
+            }).setNegativeButton("閉じる",null).show();
+    }
+    private long directorySize(File dir){
+        if(dir==null||!dir.exists())return 0;
+        if(dir.isFile())return dir.length();
+        long size=0;
+        File[] children=dir.listFiles();
+        if(children!=null)for(File child:children)size+=directorySize(child);
+        return size;
+    }
+    private void showCacheManager(){
+        long covers=directorySize(previews);
+        long books=directorySize(library);
+        String info="表紙の一時データ: "+(covers/(1024*1024))+" MB"
+            +"\n保存済み本文: "+(books/(1024*1024))+" MB"
+            +"\n\n表紙キャッシュを削除してもNASの原本や保存済み本文には影響しません。";
+        new AlertDialog.Builder(this).setTitle("キャッシュ管理")
+            .setMessage(info)
+            .setNegativeButton("閉じる",null)
+            .setPositiveButton("表紙キャッシュを削除",(dialog,which)->{
+                File[] dirs=previews.listFiles();
+                if(dirs!=null)for(File dir:dirs)delete(dir);
+                shelf();
+            }).show();
+    }
+    private void showAppInfo(){
+        new AlertDialog.Builder(this)
+            .setTitle("NAS EPUB Reader")
+            .setMessage("Version 0.4.5\n\n"
+                +"NAS内のEPUBを表紙付きで管理できる読書アプリです。"
+                +"表紙を長押しすると書籍メニューが開きます。\n"
+                +"本文のダウンロードはWi-Fi接続時のみ可能です。\n"
+                +"内蔵Tailscaleで外出先からの表紙取得にも対応しています。\n"
+                +"NASの原本をアプリから削除することはありません。")
+            .setPositiveButton("閉じる",null).show();
     }
 
     private String remoteId(String filePath){
