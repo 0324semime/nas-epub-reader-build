@@ -22,6 +22,7 @@ import org.json.JSONObject;
 public final class SecurePrefs {
     private static final String ALIAS="nas_epub_reader_smb_key_v2";
     private final SharedPreferences preferences;
+    private List<Profile> decodedProfilesCache;
     private static final String PRIMARY="primary";
     private static final String PROFILES="profiles_v1";
     public static final class Profile {
@@ -96,6 +97,9 @@ public final class SecurePrefs {
     }
     public synchronized List<Profile> listProfiles(){
         migrate();
+        // AndroidKeyStore decryption is relatively costly. Reading the shelf
+        // must not decrypt every password once per displayed book/card.
+        if(decodedProfilesCache!=null)return new ArrayList<>(decodedProfilesCache);
         List<Profile> result=new ArrayList<>();
         try{
             JSONArray arr=new JSONArray(preferences.getString(PROFILES,"[]"));
@@ -104,6 +108,7 @@ public final class SecurePrefs {
                 if(entry!=null)result.add(parse(entry));
             }
         }catch(Exception ignored){}
+        decodedProfilesCache=new ArrayList<>(result);
         return result;
     }
     private synchronized void replace(List<Profile> items)throws Exception{
@@ -111,6 +116,7 @@ public final class SecurePrefs {
         for(Profile item:items)arr.put(serialize(item));
         if(!preferences.edit().putString(PROFILES,arr.toString()).commit())
             throw new IllegalStateException("NAS接続情報を保存できません");
+        decodedProfilesCache=new ArrayList<>(items);
     }
     public synchronized String activeId(){
         return preferences.getString("active_profile",PRIMARY);
