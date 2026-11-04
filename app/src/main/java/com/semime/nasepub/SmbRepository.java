@@ -167,6 +167,39 @@ public final class SmbRepository {
         });
     }
 
+    /** Load one chapter plus small referenced assets using SMB ranges only. */
+    public static void loadChapter(Settings cfg,String path,File directory,String chapter)throws Exception{
+        if(path.startsWith("\\")||path.startsWith("/")||path.contains("..")||path.indexOf('\0')>=0)
+            throw new IOException("不正なEPUBのパス");
+        EpubParser.BookInfo info=EpubParser.parsePreview(directory);
+        if(!info.chapters.contains(chapter))
+            throw new IOException("EPUBの本文一覧にない章です");
+        connected(cfg,share->{
+            try(com.hierynomus.smbj.share.File remote=share.openFile(
+                path,EnumSet.of(AccessMask.GENERIC_READ),null,
+                SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OPEN,null)){
+                final long length=remote.getLength();
+                RemoteZipPreview.Reader reader=new RemoteZipPreview.Reader(){
+                    @Override public long size(){return length;}
+                    @Override public void read(long at,byte[] bytes,int start,int count)throws IOException{
+                        int done=0;
+                        while(done<count){
+                            try{
+                                int n=remote.read(bytes,at+done,start+done,Math.min(count-done,65536));
+                                if(n<=0)throw new IOException("SMBの部分読み込みが完了しません");
+                                done+=n;
+                            }catch(Exception e){
+                                throw new IOException("章の読み込みに失敗: "+e.getMessage(),e);
+                            }
+                        }
+                    }
+                };
+                RemoteZipPreview.fetchChapter(reader,directory,chapter);
+            }
+            return null;
+        });
+    }
+
     public interface DownloadProgress {
         void onBytes(long bytesRead);
     }

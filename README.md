@@ -1,4 +1,18 @@
-# NAS EPUB Reader — v0.4.7 Bookmark Jewel app icon
+# NAS EPUB Reader — v0.4.8 online reading and library tabs
+
+## v0.4.8 — Read without saving an EPUB
+- Library tabs **本** (all accessible remote and saved books) and **保存済み** (offline saved only) replace the old stacked categories. Tap either tab to switch.
+- On the **本** tab, a normal tap on a remote unsaved cover now opens an online reader, rather than requiring a full EPUB download.
+- Online reading uses SMB range requests to retrieve only the EPUB ZIP metadata/spine and the **current XHTML/HTML chapter**, plus selected referenced small images and stylesheets. It does **not** transfer the entire EPUB.
+- Streamed chapters remain in disposable preview cache, not in the offline/saved bookshelf. A reader may reuse recently accessed chapters while online.
+- Navigation, chapter progress, search, theme, bookmarks, and reading-position handling reuse the original reader.
+- Long-press an unsaved book to select **オンラインで読む** or **本文をダウンロード（Wi-Fiのみ）**.
+- Full EPUB offline download **remains Wi-Fi-only**. Online chapter loading may use mobile data and embedded Tailscale, so network usage may occur while reading.
+- This is experimental for ZIP64/encrypted/complex EPUB layouts. Referenced images/CSS are attempted with reasonable per-chapter size limits; some files may not render until a full EPUB is saved. No cross-book global prefetching.
+- Cached chapter data can be deleted in cache management, but is not equivalent to an offline download.
+- Existing saved books remain available offline. Stable v0.4.6 and the Thor experimental branch remain untouched.
+
+## Previous version: v0.4.7 Bookmark Jewel app icon
 
 ## v0.4.7 — Bookmark Jewel launcher icon
 - Install the user-selected **Bookmark Jewel** app icon: gold bookmark with an emerald gem, deep forest-green background.

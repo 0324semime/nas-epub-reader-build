@@ -59,6 +59,11 @@ public final class MainActivity extends Activity {
     private int chapter = 0;
     private int fontSize = 100;
     private String shelfFilter = "";
+    private int shelfTab = 0; // 0 = 本（すべて）, 1 = 保存済み
+    private SmbRepository.RemoteBook streamingRemote;
+    private SmbRepository.Settings streamingSettings;
+    private int streamingGeneration = 0;
+    private boolean streamingBusy = false;
     private int readerTheme = 0;
     private int readerMargin = 1;
     private TextView readingProgress;
@@ -193,6 +198,10 @@ public final class MainActivity extends Activity {
         folderBrowserVisible=false;
         tailnetPanelVisible=false;
         ++folderBrowserRevision;
+        streamingGeneration++;
+        streamingBusy=false;
+        streamingRemote=null;
+        streamingSettings=null;
         openedBook=null;openedFolder=null;screen();
         // Compact header: navigation, bookshelf name, and one refresh action.
         LinearLayout header=layout(true);
@@ -214,6 +223,20 @@ public final class MainActivity extends Activity {
         header.addView(refresh,new LinearLayout.LayoutParams(d(46),d(46)));
         refresh.setOnClickListener(v->refreshNas());
         root.addView(header);
+
+        LinearLayout tabs=layout(true);
+        tabs.setPadding(d(16),d(3),d(16),d(11));
+        tabs.setBackgroundColor(background);
+        TextView allTab=shelfTabButton("本",shelfTab==0);
+        TextView savedTab=shelfTabButton("保存済み",shelfTab==1);
+        allTab.setOnClickListener(v->{if(shelfTab!=0){shelfTab=0;shelf();}});
+        savedTab.setOnClickListener(v->{if(shelfTab!=1){shelfTab=1;shelf();}});
+        LinearLayout.LayoutParams firstTab=new LinearLayout.LayoutParams(0,d(43),1);
+        tabs.addView(allTab,firstTab);
+        LinearLayout.LayoutParams secondTab=new LinearLayout.LayoutParams(0,d(43),1);
+        secondTab.leftMargin=d(10);
+        tabs.addView(savedTab,secondTab);
+        root.addView(tabs);
 
         ScrollView scroll=new ScrollView(this);
         scroll.setFillViewport(true);
@@ -246,61 +269,50 @@ public final class MainActivity extends Activity {
         page.addView(state);
         nasStatusView=state;
 
-        List<JSONObject> downloaded=readBooks();
-        if(!shelfFilter.isEmpty())downloaded.removeIf(x->!bookMatches(x.optString("title",""),x.optString("author","")));
-        List<SmbRepository.RemoteBook> notSaved=new ArrayList<>();
-        for(SmbRepository.RemoteBook remote:nasBooks)
-            if(!isHidden(remoteId(remote.path)) && cachedRemote(remote)==null){
+        List<Object> visible=new ArrayList<>();
+        for(JSONObject book:readBooks()){
+            if(shelfFilter.isEmpty()||bookMatches(book.optString("title",""),
+                                                   book.optString("author","")))
+                visible.add(book);
+        }
+        if(shelfTab==0){
+            for(SmbRepository.RemoteBook remote:nasBooks){
+                if(isHidden(remoteId(remote.path)) || cachedRemote(remote)!=null)continue;
                 JSONObject preview=cachedPreview(remote);
-                if(shelfFilter.isEmpty()||bookMatches(
-                        preview==null?remote.name:preview.optString("title",remote.name),
-                        preview==null?"":preview.optString("author","")))
-                    notSaved.add(remote);
+                String title=preview==null?remote.name:preview.optString("title",remote.name);
+                String author=preview==null?"":preview.optString("author","");
+                if(shelfFilter.isEmpty()||bookMatches(title,author))visible.add(remote);
             }
-        notSaved.sort(Comparator.comparing(x->x.name.toLowerCase(Locale.ROOT)));
-
+        }
+        visible.sort(Comparator.comparing(this::gridItemTitle,String.CASE_INSENSITIVE_ORDER));
         if(!shelfFilter.isEmpty()){
             TextView query=buttonAsLabel("検索: "+shelfFilter+"   ✕",v->{shelfFilter="";shelf();});
             LinearLayout.LayoutParams q=new LinearLayout.LayoutParams(-1,-2);
             q.topMargin=d(12);
             page.addView(query,q);
         }
-        addShelfHeading(page,"保存済み",downloaded.size(),"オフラインで読める本");
-        if(downloaded.isEmpty()){
-            addEmptyShelf(page,"保存済みの本はまだありません",
-                "Wi-Fiで本文をダウンロードすると、ここに並びます。");
+        TextView overview=subtle(shelfTab==0
+            ? "すべての本  ·  "+visible.size()+"冊  /  NASの本もタップで読めます"
+            : "端末に保存済み  ·  "+visible.size()+"冊  /  オフライン読書",12);
+        overview.setPadding(d(4),d(19),d(4),d(17));
+        page.addView(overview);
+        if(visible.isEmpty()){
+            addEmptyShelf(page,shelfTab==0?"本が見つかりません":"保存済みの本はありません",
+                shelfTab==0?"NASのフォルダを更新するか、EPUBを追加してください。"
+                    :"本の表紙を長押しして、Wi-Fiで本文を保存できます。");
         }else{
-            for(int pos=0;pos<downloaded.size();pos+=3){
+            for(int pos=0;pos<visible.size();pos+=3){
                 LinearLayout row=layout(true);
                 row.setGravity(Gravity.TOP);
                 page.addView(row);
                 for(int i=0;i<3;i++){
                     LinearLayout.LayoutParams cell=new LinearLayout.LayoutParams(0,-2,1);
                     if(i>0)cell.leftMargin=d(9);
-                    if(pos+i<downloaded.size())addSavedCard(row,downloaded.get(pos+i),cell);
-                    else{
-                        View filler=new View(this);
-                        row.addView(filler,cell);
-                    }
-                }
-            }
-        }
-
-        addShelfHeading(page,"NASの本",notSaved.size(),"表紙を長押しして操作");
-        if(notSaved.isEmpty()){
-            addEmptyShelf(page,"未ダウンロードの本はありません",
-                nasBooks.isEmpty()?"右上の更新からNASの本を探せます。"
-                    :"すべての本を保存済みです。");
-        }else{
-            for(int pos=0;pos<notSaved.size();pos+=3){
-                LinearLayout row=layout(true);
-                row.setGravity(Gravity.TOP);
-                page.addView(row);
-                for(int i=0;i<3;i++){
-                    LinearLayout.LayoutParams cell=new LinearLayout.LayoutParams(0,-2,1);
-                    if(i>0)cell.leftMargin=d(9);
-                    if(pos+i<notSaved.size())addNasCard(row,notSaved.get(pos+i),cell);
-                    else row.addView(new View(this),cell);
+                    if(pos+i<visible.size()){
+                        Object item=visible.get(pos+i);
+                        if(item instanceof JSONObject)addSavedCard(row,(JSONObject)item,cell);
+                        else addNasCard(row,(SmbRepository.RemoteBook)item,cell);
+                    }else row.addView(new View(this),cell);
                 }
             }
         }
@@ -339,6 +351,20 @@ public final class MainActivity extends Activity {
                 shelfFilter=query.getText().toString().trim();
                 shelf();
             }).show();
+    }
+
+    private TextView shelfTabButton(String label,boolean active){
+        TextView v=text(label,14,true);
+        v.setGravity(Gravity.CENTER);
+        v.setTextColor(active?Color.WHITE:accent);
+        v.setBackground(rounded(active?accent:Color.rgb(232,240,235),14));
+        return v;
+    }
+    private String gridItemTitle(Object item){
+        if(item instanceof JSONObject)return ((JSONObject)item).optString("title","");
+        SmbRepository.RemoteBook remote=(SmbRepository.RemoteBook)item;
+        JSONObject preview=cachedPreview(remote);
+        return preview==null?remote.name:preview.optString("title",remote.name);
     }
 
     private void addShelfHeading(LinearLayout page,String title,int count,String description){
@@ -1094,20 +1120,77 @@ public final class MainActivity extends Activity {
     private void showPreviewTap(SmbRepository.RemoteBook remote){
         JSONObject book=cachedRemote(remote);
         if(book!=null){open(book);return;}
-        new AlertDialog.Builder(this)
-            .setTitle("本文はまだ保存されていません")
-            .setMessage("表紙を長押しし、「本文をダウンロード」を選択してください。"
-                +"本文のダウンロードはWi-Fi接続時のみ行います。"
-                +"\n表紙とタイトルはモバイル回線でも表示できます。")
-            .setPositiveButton("閉じる",null).show();
+        openRemoteBook(remote);
     }
+    /** Open an online EPUB using its spine and one lazily-loaded chapter. */
+    private void openRemoteBook(SmbRepository.RemoteBook remote){
+        if(nasBusy){
+            Toast.makeText(this,"別の処理が実行中です",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        SmbRepository.Settings cfg=smbSettings.copy();
+        nasBusy=true;
+        nasStatus="オンライン読書を準備中: "+remote.name;
+        shelf();
+        new Thread(()->{
+            try{
+                final String id=remoteId(remote.path);
+                File dir=new File(previews,id);
+                EpubParser.BookInfo info;
+                try{
+                    info=EpubParser.parsePreview(dir);
+                }catch(Exception invalid){
+                    // The lightweight metadata index can exist without the OPF after
+                    // manual cache removal. Re-fetch just metadata, not the full EPUB.
+                    if(dir.exists())delete(dir);
+                    info=SmbRepository.preview(cfg,remote.path,dir);
+                    JSONObject preview=new JSONObject();
+                    preview.put("id",id);preview.put("source",remote.path);
+                    preview.put("title",info.title);preview.put("author",info.author);
+                    preview.put("cover",info.cover);
+                    try(OutputStream out=new FileOutputStream(new File(dir,"preview.json"))){
+                        out.write(preview.toString().getBytes(StandardCharsets.UTF_8));
+                    }
+                }
+                JSONObject book=new JSONObject();
+                book.put("id",id);
+                book.put("title",info.title);
+                book.put("author",info.author);
+                book.put("cover",info.cover);
+                book.put("source",remote.path);
+                JSONArray chapters=new JSONArray();
+                for(String path:info.chapters)chapters.put(path);
+                book.put("chapters",chapters);
+                runOnUiThread(()->{
+                    nasBusy=false;
+                    streamingRemote=remote;
+                    streamingSettings=cfg;
+                    streamingBusy=false;
+                    streamingGeneration++;
+                    nasStatus="オンライン読書中: "+remote.name;
+                    open(book);
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    nasBusy=false;
+                    nasStatus="オンライン読書を開始できません: "+friendly(e);
+                    shelf();
+                    showTransferError("NASから本を開けませんでした",e);
+                });
+            }
+        },"smb-open-online-book").start();
+    }
+
+
     private void showBookMenu(SmbRepository.RemoteBook remote,JSONObject book,JSONObject preview){
         String name=book!=null?book.optString("title",""):preview!=null
             ?preview.optString("title",remote==null?"":remote.name)
             :remote==null?"":remote.name;
         boolean downloaded=book!=null;
         List<String> actions=new ArrayList<>();
-        actions.add(downloaded?"📖 本を読む":"⬇ 本文をダウンロード（Wi-Fiのみ）");
+        actions.add(downloaded?"📖 本を読む":"📖 オンラインで読む");
+        if(!downloaded && remote!=null)
+            actions.add("⬇ 本文をダウンロード（Wi-Fiのみ）");
         if(downloaded)actions.add("🗑 本文を削除（端末のみ）");
         if(remote!=null)actions.add("🙈 本棚から非表示（この端末のみ）");
         if(remote!=null)actions.add("🖼 表紙キャッシュを削除");
@@ -1115,7 +1198,10 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle(name.isEmpty()?"書籍メニュー":name)
             .setItems(actions.toArray(new String[0]),(dialog,which)->{
                 String selected=actions.get(which);
-                if(selected.startsWith("📖") && book!=null)open(book);
+                if(selected.startsWith("📖")){
+                    if(book!=null)open(book);
+                    else if(remote!=null)openRemoteBook(remote);
+                }
                 else if(selected.startsWith("⬇") && remote!=null)downloadRemoteBook(remote);
                 else if(selected.startsWith("🗑") && book!=null)confirmLocalDeletion(book);
                 else if(selected.startsWith("🙈") && remote!=null){
@@ -1636,7 +1722,8 @@ public final class MainActivity extends Activity {
     }
     private void open(JSONObject book){
         openedBook=book;
-        openedFolder=new File(library,book.optString("id"));
+        openedFolder=new File(streamingRemote!=null?previews:library,
+                              book.optString("id"));
         chapter=getPreferences(0).getInt("chapter_"+currentBookId(),0);
         readerTheme=getPreferences(0).getInt("reader_theme",0);
         readerMargin=getPreferences(0).getInt("reader_margin",1);
@@ -1817,6 +1904,10 @@ public final class MainActivity extends Activity {
         JSONArray pages=openedBook.optJSONArray("chapters");
         if(pages==null||n<0||n>=pages.length())return;
         File f=new File(openedFolder,pages.optString(n));
+        if(streamingRemote!=null && !f.isFile()){
+            fetchStreamingChapter(n,y);
+            return;
+        }
         try{
             if(!f.getCanonicalPath().startsWith(openedFolder.getCanonicalPath()+File.separator))return;
             if(chapter!=n)rememberReaderPosition();
@@ -1834,6 +1925,42 @@ public final class MainActivity extends Activity {
             restoringScroll=false;
             Toast.makeText(this,"本文を開けません",Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /** Page-level SMB range loading: receiving a chapter is not an offline download. */
+    private void fetchStreamingChapter(int chapterIndex,int scrollOffset){
+        if(streamingRemote==null || streamingSettings==null || openedBook==null)return;
+        if(streamingBusy){
+            Toast.makeText(this,"章を読み込み中です",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        JSONArray chapters=openedBook.optJSONArray("chapters");
+        if(chapters==null||chapterIndex<0||chapterIndex>=chapters.length())return;
+        final String relative=chapters.optString(chapterIndex,"");
+        final SmbRepository.RemoteBook remote=streamingRemote;
+        final SmbRepository.Settings cfg=streamingSettings.copy();
+        final File target=openedFolder;
+        final int ticket=++streamingGeneration;
+        streamingBusy=true;
+        if(readingProgress!=null)readingProgress.setText("NASから章を読み込み中…");
+        new Thread(()->{
+            try{
+                SmbRepository.loadChapter(cfg,remote.path,target,relative);
+                runOnUiThread(()->{
+                    if(ticket!=streamingGeneration||streamingRemote!=remote
+                            ||openedBook==null)return;
+                    streamingBusy=false;
+                    pageAt(chapterIndex,scrollOffset);
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    if(ticket!=streamingGeneration||streamingRemote!=remote)return;
+                    streamingBusy=false;
+                    if(readingProgress!=null)readingProgress.setText("章の取得に失敗");
+                    showTransferError("章のオンライン読み込みに失敗しました",e);
+                });
+            }
+        },"smb-epub-chapter").start();
     }
 
     private static byte[] readFile(File file,int max)throws Exception{

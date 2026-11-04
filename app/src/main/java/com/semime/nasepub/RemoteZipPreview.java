@@ -79,6 +79,58 @@ public final class RemoteZipPreview {
       throw new IOException("Unable to create preview directory");
     try(FileOutputStream out=new FileOutputStream(dest)){out.write(bytes);}
   }
+  /**
+   * Read only the chosen spine HTML entry and referenced small assets.
+   * The complete EPUB is never copied to local storage. Chapters may remain
+   * as a disposable preview cache; their presence does not mean "saved".
+   */
+  public static void fetchChapter(Reader reader,File root,String chapter)throws Exception{
+    if(chapter==null||chapter.isEmpty())throw new IOException("本文のパスがありません");
+    Map<String,Item> entries=index(reader);
+    extract(reader,entries,root,chapter,6*1024*1024);
+    File html=new File(root,chapter).getCanonicalFile();
+    if(!html.getPath().startsWith(root.getCanonicalPath()+File.separator))
+      throw new IOException("Unsafe chapter path");
+    if(!html.isFile())throw new IOException("本文ファイルが存在しません");
+    String source=new String(java.nio.file.Files.readAllBytes(html.toPath()),StandardCharsets.UTF_8);
+    // Fetch only optional linked images/stylesheets; failure never hides text.
+    java.util.regex.Pattern links=java.util.regex.Pattern.compile(
+      "(?i)(?:src|href)\\s*=\\s*['\\\"]([^'\\\"]+)['\\\"]");
+    java.util.regex.Matcher matcher=links.matcher(source);
+    Set<String> wanted=new LinkedHashSet<>();
+    while(matcher.find()&&wanted.size()<18){
+      String href=matcher.group(1);
+      if(href==null||href.startsWith("#")||href.startsWith("//")||
+         href.matches("(?i)^[a-z][a-z0-9+.-]*:.*"))continue;
+      String noQuery=href.split("[?#]",2)[0];
+      String ext=noQuery.toLowerCase(Locale.ROOT);
+      if(!(ext.endsWith(".css")||ext.endsWith(".jpg")||ext.endsWith(".jpeg")||
+        ext.endsWith(".png")||ext.endsWith(".gif")||ext.endsWith(".svg")||
+        ext.endsWith(".webp")))continue;
+      try{
+        File target=new File(html.getParentFile(),
+          URLDecoder.decode(noQuery.replace("+","%2B"),"UTF-8")).getCanonicalFile();
+        String prefix=root.getCanonicalPath()+File.separator;
+        if(!target.getPath().startsWith(prefix))continue;
+        String entryName=target.getPath().substring(prefix.length()).replace(File.separatorChar,'/');
+        wanted.add(entryName);
+      }catch(Exception ignored){}
+    }
+    int attempts=0;
+    long maxTransfer=12L*1024*1024;
+    for(String filename:wanted){
+      if(++attempts>14||maxTransfer<=0)break;
+      Item item=entries.get(filename);
+      if(item==null||item.plain<=0||item.plain>3L*1024*1024
+        ||item.compressed>3L*1024*1024)continue;
+      File existing=new File(root,filename);
+      if(existing.isFile()&&existing.length()==item.plain)continue;
+      if(item.plain>maxTransfer)continue;
+      try{extract(reader,entries,root,filename,3*1024*1024);maxTransfer-=item.plain;}
+      catch(IOException ignored){}
+    }
+  }
+
   public static EpubParser.BookInfo fetch(Reader r,File root)throws Exception{
     if(!root.exists()&&!root.mkdirs())throw new IOException("Unable to create cache");
     Map<String,Item> zip=index(r);

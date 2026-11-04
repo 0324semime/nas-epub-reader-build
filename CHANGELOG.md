@@ -1,4 +1,12 @@
 # Changelog
+## v0.4.8
+- Replace stacked saved/remote library sections with tabbed 本 / 保存済み grids.
+- Allow online NAS EPUB reading on cover tap without an offline full download.
+- Fetch each requested chapter (and small referenced media/CSS) using read-only SMB ZIP range reads.
+- Keep cached online chapters separate from downloaded offline books.
+- Offer online reading plus Wi-Fi-only full offline download in the long-press menu.
+- Retain Bookmark Jewel icon, Tailscale, SMB, reader tools and local library.
+
 ## v0.4.7
 - Replace default launcher icon with the selected Bookmark Jewel design (gold bookmark and emerald pendant on deep green).
 - Bundle the actual generated artwork as a WebP Android resource and specify round/regular launcher icons.
