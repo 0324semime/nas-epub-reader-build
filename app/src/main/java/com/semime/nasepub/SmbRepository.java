@@ -31,9 +31,12 @@ public final class SmbRepository {
         public String user = "";
         public String password = "";
         public String domain = "";
+        public String tailnetHost = ""; // Per-NAS Tailscale target; blank uses profile default.
+        public String profileId = "primary";
         public Settings copy(){
             Settings c=new Settings();c.host=host;c.share=share;c.folder=folder;
-            c.user=user;c.password=password;c.domain=domain;return c;
+            c.user=user;c.password=password;c.domain=domain;
+            c.tailnetHost=tailnetHost;c.profileId=profileId;return c;
         }
         public void validate(){
             if(host.trim().isEmpty()||share.trim().isEmpty())throw new IllegalArgumentException("NASのIPアドレスと共有フォルダ名を入力してください");
@@ -105,7 +108,12 @@ public final class SmbRepository {
     private static <T> T connected(Settings cfg,Task<T> task) throws Exception {
         cfg.validate();
         boolean tailnet=EmbeddedTailnet.enabled();
-        int port=tailnet ? EmbeddedTailnet.tunnelPort(cfg.host.trim()) : 445;
+        // Keep the legacy global target for primary's existing setup.
+        // Additional NAS profiles MUST NOT be routed to primary's target.
+        String target=!cfg.tailnetHost.trim().isEmpty()?cfg.tailnetHost.trim()
+            :("primary".equals(cfg.profileId)
+                ?EmbeddedTailnet.target(cfg.host.trim()):cfg.host.trim());
+        int port=tailnet ? EmbeddedTailnet.tunnelPortTo(target) : 445;
         String endpoint=tailnet ? "127.0.0.1" : cfg.host.trim();
         try(SMBClient client=new SMBClient();
             Connection connection=client.connect(endpoint,port)) {

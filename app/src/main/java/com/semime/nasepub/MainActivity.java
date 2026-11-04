@@ -652,6 +652,7 @@ public final class MainActivity extends Activity {
         try{
             MessageDigest md=MessageDigest.getInstance("SHA-256");
             String key=cfg.host+"|"+cfg.share+"|"+path;
+            if(!cfg.tailnetHost.isEmpty())key+="|tailnet:"+cfg.tailnetHost;
             byte[] bytes=md.digest(key.getBytes(StandardCharsets.UTF_8));
             StringBuilder b=new StringBuilder("nas-");
             for(int i=0;i<12;i++)b.append(String.format(Locale.ROOT,"%02x",bytes[i]&255));
@@ -942,7 +943,14 @@ public final class MainActivity extends Activity {
         EditText user=settingField("SMBユーザー名",smbSettings.user,InputType.TYPE_CLASS_TEXT);
         EditText pass=settingField("SMBパスワード",smbSettings.password,InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         EditText domain=settingField("ドメイン（通常は空欄）",smbSettings.domain,InputType.TYPE_CLASS_TEXT);
-        for(EditText f:new EditText[]{host,share,user,pass,domain})columns.addView(f);
+        EditText tailnet=settingField(
+            "このNASのTailscale転送先（任意: 100.x.x.x / xxx.ts.net）",
+            smbSettings.tailnetHost,InputType.TYPE_CLASS_TEXT);
+        for(EditText f:new EditText[]{host,share,user,pass,domain,tailnet})columns.addView(f);
+        TextView tip=subtle("内蔵Tailscale有効時、追加NASは基本的に各NASのホストへ接続します。"
+            +"別のTailscale IPやサブネット転送先を使う場合は上欄に指定してください。"
+            +"既存のNAS 1は未入力なら従来のTailscale設定を引き継ぎます。",11);
+        columns.addView(tip);
         AlertDialog dialog=new AlertDialog.Builder(this)
             .setTitle("NAS接続設定（SMB2/3）")
             .setView(view)
@@ -956,10 +964,13 @@ public final class MainActivity extends Activity {
             next.user=user.getText().toString();
             next.password=pass.getText().toString();
             next.domain=domain.getText().toString();
+            next.tailnetHost=tailnet.getText().toString().trim();
+            next.profileId=smbPreferences.activeId();
             boolean locationChanged=!smbSettings.host.equals(next.host)
                 || !smbSettings.share.equals(next.share)
                 || !smbSettings.user.equals(next.user)
-                || !smbSettings.domain.equals(next.domain);
+                || !smbSettings.domain.equals(next.domain)
+                || !smbSettings.tailnetHost.equals(next.tailnetHost);
             next.folder=locationChanged?"":smbSettings.folder;
             try{
                 next.validate();

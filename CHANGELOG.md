@@ -5,6 +5,8 @@
 - Refresh all configured NAS shelves; keep results from other NAS locations when one fails.
 - Resolve online streaming, cover preview and offline download to each book's source profile.
 - Add source labels under remote book cards when multiple NAS profiles are registered.
+- Use per-NAS embedded Tailscale targets instead of routing every profile to the original NAS; retain legacy target for the primary connection.
+- Cache decrypted profile metadata for efficient bookshelf rendering.
 - Show live left-to-right emerald progress bar between title and author during full EPUB download.
 
 ## v0.4.8

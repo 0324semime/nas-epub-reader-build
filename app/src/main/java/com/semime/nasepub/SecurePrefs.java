@@ -58,6 +58,7 @@ public final class SecurePrefs {
         s.folder=preferences.getString("folder","");
         s.user=preferences.getString("user","");
         s.domain=preferences.getString("domain","");
+        s.profileId=PRIMARY;
         String data=preferences.getString("password","");
         try{s.password=data.isEmpty()?"":decrypt(data);}
         catch(Exception e){s.password="";}
@@ -69,6 +70,7 @@ public final class SecurePrefs {
         obj.put("host",p.settings.host);obj.put("share",p.settings.share);
         obj.put("folder",p.settings.folder);obj.put("user",p.settings.user);
         obj.put("domain",p.settings.domain);obj.put("password",encrypt(p.settings.password));
+        obj.put("tailnet_host",p.settings.tailnetHost);
         obj.put("folder_selected",p.folderSelected);
         return obj;
     }
@@ -79,6 +81,8 @@ public final class SecurePrefs {
         s.host=obj.optString("host","");s.share=obj.optString("share","");
         s.folder=obj.optString("folder","");s.user=obj.optString("user","");
         s.domain=obj.optString("domain","");
+        s.tailnetHost=obj.optString("tailnet_host","");
+        s.profileId=id;
         String enc=obj.optString("password","");
         try{s.password=enc.isEmpty()?"":decrypt(enc);}
         catch(Exception e){s.password="";}
@@ -135,6 +139,7 @@ public final class SecurePrefs {
         String id=UUID.randomUUID().toString();
         SmbRepository.Settings empty=new SmbRepository.Settings();
         empty.host="";empty.share="";empty.folder="";empty.user="";empty.password="";
+        empty.profileId=id;
         profiles.add(new Profile(id,name.trim().isEmpty()?"NAS "+(profiles.size()+1):name.trim(),empty,false));
         replace(profiles);select(id);
         return id;

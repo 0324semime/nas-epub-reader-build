@@ -8,6 +8,8 @@
 - Associate every remote book with its original profile so online reading, lightweight preview and Wi-Fi-only full EPUB downloads address the correct NAS.
 - Identify the NAS profile under remote book cards when multiple profiles exist.
 - **Download progress**: while Wi-Fi full-EPUB download runs, a thin gray horizontal line between title and author fills emerald green from left to right using actual transferred/total bytes. Progress disappears after the download succeeds or fails.
+- Per-profile embedded Tailscale target: in NAS connection settings, optionally specify the 100.x / *.ts.net address or subnet-reachable private IP. The original profile inherits the preexisting global Tailscale target when blank; newly added profiles default to their own SMB host when blank. The Go loopback SMB proxy switches remote targets sequentially; do not assume concurrent sessions across different NAS targets.
+- Decrypted connection metadata is cached in memory during app use, to avoid repeated slow Android Keystore decryptions for each bookshelf card.
 - No changes to existing EPUB parsing/reading, cover previews, tab switching, Bookmark Jewel icon or Thor branch.
 - Note: data in online cache is not considered a full offline download; full book saving still requires Wi-Fi.
 

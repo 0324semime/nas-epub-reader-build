@@ -62,9 +62,13 @@ public final class EmbeddedTailnet {
      * Tailscale performs only network transit; SMBJ still authenticates to NAS.
      */
     public static int tunnelPort(String defaultHost)throws Exception {
+        return tunnelPortTo(target(defaultHost));
+    }
+    /** Explicit per-profile target; never inherit another NAS's tunnel host. */
+    public static int tunnelPortTo(String host)throws Exception {
         if(application==null)throw new IllegalStateException("Tailscaleが初期化されていません");
         if(!enabled())throw new IllegalStateException("内蔵Tailscaleが無効です");
-        String host=target(defaultHost);
+        host=host==null?"":host.trim();
         if(!Tsbridge.validateTarget(host))
             throw new IllegalArgumentException("接続先のTailscaleアドレスが正しくありません");
         String result=start();
