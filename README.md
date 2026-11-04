@@ -1,4 +1,14 @@
-# NAS EPUB Reader — v0.4.6 refined library and reading tools
+# NAS EPUB Reader — v0.4.7 Bookmark Jewel app icon
+
+## v0.4.7 — Bookmark Jewel launcher icon
+- Install the user-selected **Bookmark Jewel** app icon: gold bookmark with an emerald gem, deep forest-green background.
+- Source artwork optimized as 256x256 WebP for Android launcher usage and bundled in `app/src/main/res/drawable-nodpi/bookmark_jewel.webp`.
+- Configure both `android:icon` and `android:roundIcon` in the Android manifest.
+- No changes to EPUB bookshelf, navigation, Wi-Fi-only body downloads, SMB, Tailscale, or reading features.
+- Keep the original application ID and private storage; note that GitHub ephemeral debug signing may still block over-installation.
+- AYN Thor experimental branch remains separate.
+
+## Previous release: v0.4.6 refined library and reading tools
 
 ## v0.4.6 — Reading experience refresh
 - Remove the verbose embedded Tailscale route explanation from the top of the library; keep Tailscale settings/diagnostics inside the left navigation drawer.

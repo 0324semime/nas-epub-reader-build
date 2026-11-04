@@ -1,4 +1,9 @@
 # Changelog
+## v0.4.7
+- Replace default launcher icon with the selected Bookmark Jewel design (gold bookmark and emerald pendant on deep green).
+- Bundle the actual generated artwork as a WebP Android resource and specify round/regular launcher icons.
+- Keep all functional behavior at v0.4.6; preserve Thor experiment separately.
+
 ## v0.4.6
 - Remove Tailscale route text from library main header; keep network controls in the drawer.
 - Add persistent per-book multi-bookmark and bookmark navigation.
