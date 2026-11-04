@@ -48,7 +48,11 @@ public final class SmbRepository {
     public static final class RemoteBook {
         public final String name;
         public final String path;
-        public RemoteBook(String name,String path){this.name=name;this.path=path;}
+        public final String profileId;
+        public RemoteBook(String name,String path){this(name,path,"primary");}
+        public RemoteBook(String name,String path,String profileId){
+            this.name=name;this.path=path;this.profileId=profileId;
+        }
     }
     /** One visible row in the share browser. Lists directories and files, without downloading. */
     public static final class BrowseEntry {
@@ -202,6 +206,7 @@ public final class SmbRepository {
 
     public interface DownloadProgress {
         void onBytes(long bytesRead);
+        default void onProgress(long bytesRead,long totalBytes){onBytes(bytesRead);}
     }
     public interface TransferAllowed {
         boolean allowed();
@@ -221,6 +226,8 @@ public final class SmbRepository {
                     InputStream in=remote.getInputStream();
                     FileOutputStream out=new FileOutputStream(output)){
                     byte[] buffer=new byte[65536];
+                    final long totalBytes=remote.getLength();
+                    if(progress!=null)progress.onProgress(0L,totalBytes);
                     int n;
                     long lastBytes=0;
                     long lastSignal=System.nanoTime();
@@ -238,13 +245,13 @@ public final class SmbRepository {
                         long now=System.nanoTime();
                         if(progress!=null &&
                             (downloaded[0]-lastBytes>=524288L || now-lastSignal>500000000L)){
-                            progress.onBytes(downloaded[0]);
+                            progress.onProgress(downloaded[0],totalBytes);
                             lastBytes=downloaded[0];
                             lastSignal=now;
                         }
                     }
                     out.getFD().sync();
-                    if(progress!=null)progress.onBytes(downloaded[0]);
+                    if(progress!=null)progress.onProgress(downloaded[0],totalBytes);
                 }
                 return null;
             });

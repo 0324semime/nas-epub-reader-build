@@ -1,4 +1,12 @@
 # Changelog
+## v0.4.9
+- Add multiple named NAS/SMB connection profiles and secure per-profile credentials.
+- Migrate old single-NAS credentials and cached shelf indexes without changing existing downloaded books.
+- Refresh all configured NAS shelves; keep results from other NAS locations when one fails.
+- Resolve online streaming, cover preview and offline download to each book's source profile.
+- Add source labels under remote book cards when multiple NAS profiles are registered.
+- Show live left-to-right emerald progress bar between title and author during full EPUB download.
+
 ## v0.4.8
 - Replace stacked saved/remote library sections with tabbed 本 / 保存済み grids.
 - Allow online NAS EPUB reading on cover tap without an offline full download.

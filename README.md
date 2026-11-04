@@ -1,4 +1,17 @@
-# NAS EPUB Reader — v0.4.8 online reading and library tabs
+# NAS EPUB Reader — v0.4.9 multi-NAS library and download progress
+
+## v0.4.9 — Multiple independent NAS profiles
+- **Register up to 12 SMB/NAS connection profiles**, each with a label, host, share, credentials and its own selected folder. Select an active profile for editing/browsing without hiding the other NAS books.
+- Existing v0.4.8 connection migrates to profile `primary`, retaining credentials via Android KeyStore AES-GCM. New credentials are also encrypted, never committed to GitHub.
+- Refresh all configured profiles sequentially, merging their books into a single **本** tab. Offline saved books remain visible in **保存済み** even after a profile is removed.
+- Preserve cached books per profile when one NAS is unavailable; refresh errors identify the affected profile. The active profile affects settings editing only, not book playback or downloads.
+- Associate every remote book with its original profile so online reading, lightweight preview and Wi-Fi-only full EPUB downloads address the correct NAS.
+- Identify the NAS profile under remote book cards when multiple profiles exist.
+- **Download progress**: while Wi-Fi full-EPUB download runs, a thin gray horizontal line between title and author fills emerald green from left to right using actual transferred/total bytes. Progress disappears after the download succeeds or fails.
+- No changes to existing EPUB parsing/reading, cover previews, tab switching, Bookmark Jewel icon or Thor branch.
+- Note: data in online cache is not considered a full offline download; full book saving still requires Wi-Fi.
+
+## Previous version: v0.4.8 online reading and library tabs
 
 ## v0.4.8 — Read without saving an EPUB
 - Library tabs **本** (all accessible remote and saved books) and **保存済み** (offline saved only) replace the old stacked categories. Tap either tab to switch.

@@ -8,17 +8,33 @@ import android.util.Base64;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
-/** Keeps SMB credentials in Android KeyStore; nothing secret is embedded into the APK. */
+/** Multiple independent SMB connections; AES-GCM passwords remain in AndroidKeyStore. */
 public final class SecurePrefs {
     private static final String ALIAS="nas_epub_reader_smb_key_v2";
     private final SharedPreferences preferences;
+    private static final String PRIMARY="primary";
+    private static final String PROFILES="profiles_v1";
+    public static final class Profile {
+        public final String id,name;
+        public final SmbRepository.Settings settings;
+        public final boolean folderSelected;
+        Profile(String id,String name,SmbRepository.Settings settings,boolean selected){
+            this.id=id;this.name=name;this.settings=settings;this.folderSelected=selected;
+        }
+    }
     public SecurePrefs(Context context){
         preferences=context.getSharedPreferences("smb_connection_v2",Context.MODE_PRIVATE);
+        migrate();
     }
     private SecretKey key() throws Exception {
         KeyStore store=KeyStore.getInstance("AndroidKeyStore");
@@ -33,23 +49,8 @@ public final class SecurePrefs {
             .setRandomizedEncryptionRequired(true).build();
         generator.init(spec);return generator.generateKey();
     }
-    public void save(SmbRepository.Settings s) throws Exception {
-        String encrypted=encrypt(s.password);
-        preferences.edit()
-            .putString("host",s.host).putString("share",s.share)
-            .putString("folder",s.folder).putString("user",s.user)
-            .putString("domain",s.domain).putString("password",encrypted)
-            .apply();
-    }
-    /** The root of a share can be explicitly selected (empty folder path). */
-    public boolean hasFolderSelection() {
-        return preferences.getBoolean("folder_selected",
-            !preferences.getString("folder", "").isEmpty());
-    }
-    public void setFolderSelected(boolean selected) {
-        preferences.edit().putBoolean("folder_selected", selected).apply();
-    }
-    public SmbRepository.Settings load(){
+
+    private SmbRepository.Settings legacy(){
         SmbRepository.Settings s=new SmbRepository.Settings();
         s.host=preferences.getString("host","192.168.3.4");
         s.share=preferences.getString("share","");
@@ -60,6 +61,126 @@ public final class SecurePrefs {
         try{s.password=data.isEmpty()?"":decrypt(data);}
         catch(Exception e){s.password="";}
         return s;
+    }
+    private JSONObject serialize(Profile p)throws Exception{
+        JSONObject obj=new JSONObject();
+        obj.put("id",p.id);obj.put("name",p.name);
+        obj.put("host",p.settings.host);obj.put("share",p.settings.share);
+        obj.put("folder",p.settings.folder);obj.put("user",p.settings.user);
+        obj.put("domain",p.settings.domain);obj.put("password",encrypt(p.settings.password));
+        obj.put("folder_selected",p.folderSelected);
+        return obj;
+    }
+    private Profile parse(JSONObject obj){
+        String id=obj.optString("id",PRIMARY);
+        String name=obj.optString("name","NAS");
+        SmbRepository.Settings s=new SmbRepository.Settings();
+        s.host=obj.optString("host","");s.share=obj.optString("share","");
+        s.folder=obj.optString("folder","");s.user=obj.optString("user","");
+        s.domain=obj.optString("domain","");
+        String enc=obj.optString("password","");
+        try{s.password=enc.isEmpty()?"":decrypt(enc);}
+        catch(Exception e){s.password="";}
+        return new Profile(id,name,s,obj.optBoolean("folder_selected",false));
+    }
+    private synchronized void migrate(){
+        if(preferences.contains(PROFILES))return;
+        SmbRepository.Settings old=legacy();
+        boolean selected=preferences.getBoolean("folder_selected",!old.folder.isEmpty());
+        try{
+            JSONArray arr=new JSONArray();
+            arr.put(serialize(new Profile(PRIMARY,"NAS 1",old,selected)));
+            preferences.edit().putString(PROFILES,arr.toString())
+                .putString("active_profile",PRIMARY).commit();
+        }catch(Exception e){throw new IllegalStateException("NAS接続情報を移行できません",e);}
+    }
+    public synchronized List<Profile> listProfiles(){
+        migrate();
+        List<Profile> result=new ArrayList<>();
+        try{
+            JSONArray arr=new JSONArray(preferences.getString(PROFILES,"[]"));
+            for(int i=0;i<arr.length();i++){
+                JSONObject entry=arr.optJSONObject(i);
+                if(entry!=null)result.add(parse(entry));
+            }
+        }catch(Exception ignored){}
+        return result;
+    }
+    private synchronized void replace(List<Profile> items)throws Exception{
+        JSONArray arr=new JSONArray();
+        for(Profile item:items)arr.put(serialize(item));
+        if(!preferences.edit().putString(PROFILES,arr.toString()).commit())
+            throw new IllegalStateException("NAS接続情報を保存できません");
+    }
+    public synchronized String activeId(){
+        return preferences.getString("active_profile",PRIMARY);
+    }
+    public synchronized Profile profile(String id){
+        for(Profile p:listProfiles())if(p.id.equals(id))return p;
+        return null;
+    }
+    public synchronized void select(String id){
+        if(profile(id)==null)throw new IllegalArgumentException("不明な接続先です");
+        preferences.edit().putString("active_profile",id).apply();
+    }
+    public synchronized String add(String name)throws Exception{
+        List<Profile> profiles=listProfiles();
+        if(profiles.size()>=12)throw new IllegalArgumentException("NAS接続先は最大12件です");
+        String id=UUID.randomUUID().toString();
+        SmbRepository.Settings empty=new SmbRepository.Settings();
+        empty.host="";empty.share="";empty.folder="";empty.user="";empty.password="";
+        profiles.add(new Profile(id,name.trim().isEmpty()?"NAS "+(profiles.size()+1):name.trim(),empty,false));
+        replace(profiles);select(id);
+        return id;
+    }
+    public synchronized void remove(String id)throws Exception{
+        List<Profile> profiles=listProfiles();
+        if(profiles.size()<=1)throw new IllegalArgumentException("最後の接続先は削除できません");
+        if(!profiles.removeIf(x->x.id.equals(id)))return;
+        replace(profiles);
+        if(id.equals(activeId()))select(profiles.get(0).id);
+    }
+    public synchronized void rename(String id,String name)throws Exception{
+        if(name==null||name.trim().isEmpty())throw new IllegalArgumentException("名前を入力してください");
+        List<Profile> profiles=listProfiles();
+        for(int i=0;i<profiles.size();i++){
+            Profile p=profiles.get(i);
+            if(p.id.equals(id))profiles.set(i,new Profile(p.id,name.trim(),p.settings,p.folderSelected));
+        }
+        replace(profiles);
+    }
+    public synchronized void save(SmbRepository.Settings s)throws Exception{
+        List<Profile> profiles=listProfiles();
+        String target=activeId();
+        boolean updated=false;
+        for(int i=0;i<profiles.size();i++){
+            Profile p=profiles.get(i);
+            if(p.id.equals(target)){
+                profiles.set(i,new Profile(p.id,p.name,s.copy(),p.folderSelected));
+                updated=true;break;
+            }
+        }
+        if(!updated)throw new IllegalStateException("NAS接続先が見つかりません");
+        replace(profiles);
+    }
+    public synchronized boolean hasFolderSelection(){
+        Profile p=profile(activeId());
+        return p!=null&&p.folderSelected;
+    }
+    public synchronized void setFolderSelected(boolean selected){
+        try{
+            List<Profile> profiles=listProfiles();
+            for(int i=0;i<profiles.size();i++){
+                Profile p=profiles.get(i);
+                if(p.id.equals(activeId()))
+                    profiles.set(i,new Profile(p.id,p.name,p.settings,selected));
+            }
+            replace(profiles);
+        }catch(Exception e){throw new IllegalStateException("フォルダ設定を保存できません",e);}
+    }
+    public synchronized SmbRepository.Settings load(){
+        Profile p=profile(activeId());
+        return p==null?legacy():p.settings.copy();
     }
     private String encrypt(String plain) throws Exception{
         if(plain.isEmpty())return "";

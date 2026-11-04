@@ -8,8 +8,8 @@ android {
         applicationId 'com.semime.nasepub'
         minSdk 26
         targetSdk 34
-        versionCode 13
-        versionName '0.4.8'
+        versionCode 14
+        versionName '0.4.9'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

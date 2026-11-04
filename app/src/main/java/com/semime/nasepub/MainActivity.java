@@ -26,6 +26,8 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.ProgressBar;
+import android.content.res.ColorStateList;
 import android.widget.CheckBox;
 import android.content.ActivityNotFoundException;
 import android.widget.EditText;
@@ -76,6 +78,8 @@ public final class MainActivity extends Activity {
     private SecurePrefs smbPreferences;
     private SmbRepository.Settings smbSettings;
     private final List<SmbRepository.RemoteBook> nasBooks = new ArrayList<>();
+    private final Map<String,Integer> transferPercents=new HashMap<>();
+    private final Map<String,ProgressBar> displayedProgress=new HashMap<>();
     private String nasStatus = "NASは未接続です";
     private volatile boolean nasBusy = false;
     private TextView nasStatusView;
@@ -145,14 +149,9 @@ public final class MainActivity extends Activity {
             JSONObject o=new JSONObject(new String(data,StandardCharsets.UTF_8));
             if(!dir.getName().equals(o.optString("id")))continue;
             String source=o.optString("source","");
-            if(!source.isEmpty()){
-                if(isHidden(o.optString("id")))continue;
-                if(!smbPreferences.hasFolderSelection())continue;
-                if(!dir.getName().equals(remoteId(source)))continue;
-                String selected=smbSettings.folder;
-                if(!selected.isEmpty()&&!source.toLowerCase(Locale.ROOT)
-                    .startsWith((selected+"\\").toLowerCase(Locale.ROOT)))continue;
-            }
+            if(!source.isEmpty()&&isHidden(o.optString("id")))continue;
+            // Downloaded EPUBs stay offline-available even when a remote profile
+            // is deselected, unavailable, or removed from the connection list.
             books.add(o);
         }catch(Exception ignored){}
         Collections.sort(books, Comparator.comparing(x->x.optString("title","")));
@@ -190,7 +189,7 @@ public final class MainActivity extends Activity {
     private int countUndownloaded(){
         int count=0;
         for(SmbRepository.RemoteBook item:nasBooks){
-            if(!isHidden(remoteId(item.path)) && cachedRemote(item)==null)count++;
+            if(!isHidden(remoteId(item)) && cachedRemote(item)==null)count++;
         }
         return count;
     }
@@ -203,6 +202,7 @@ public final class MainActivity extends Activity {
         streamingRemote=null;
         streamingSettings=null;
         openedBook=null;openedFolder=null;screen();
+        displayedProgress.clear();
         // Compact header: navigation, bookshelf name, and one refresh action.
         LinearLayout header=layout(true);
         header.setPadding(d(16),d(18),d(16),d(12));
@@ -251,9 +251,14 @@ public final class MainActivity extends Activity {
         LinearLayout locationBar=layout(true);
         locationBar.setPadding(d(13),d(11),d(13),d(11));
         locationBar.setBackground(rounded(Color.rgb(234,242,237),14));
-        String folderText=smbPreferences.hasFolderSelection()
-            ?smbSettings.share+(smbSettings.folder.isEmpty()?"":" / "+smbSettings.folder.replace('\\','/'))
-            :"フォルダ未選択";
+        int sourceCount=0;
+        for(SecurePrefs.Profile profile:smbPreferences.listProfiles())
+            if(profile.folderSelected && !profile.settings.share.isEmpty())sourceCount++;
+        String folderText=sourceCount>1
+            ?sourceCount+"カ所のNASフォルダを登録済み"
+            :smbPreferences.hasFolderSelection()
+              ?smbSettings.share+(smbSettings.folder.isEmpty()?"":" / "+smbSettings.folder.replace('\\','/'))
+              :"フォルダ未選択";
         TextView pathLabel=text("▣  "+folderText,12,true);
         pathLabel.setTextColor(Color.rgb(55,98,82));
         pathLabel.setMaxLines(2);
@@ -277,7 +282,7 @@ public final class MainActivity extends Activity {
         }
         if(shelfTab==0){
             for(SmbRepository.RemoteBook remote:nasBooks){
-                if(isHidden(remoteId(remote.path)) || cachedRemote(remote)!=null)continue;
+                if(isHidden(remoteId(remote)) || cachedRemote(remote)!=null)continue;
                 JSONObject preview=cachedPreview(remote);
                 String title=preview==null?remote.name:preview.optString("title",remote.name);
                 String author=preview==null?"":preview.optString("author","");
@@ -316,7 +321,7 @@ public final class MainActivity extends Activity {
                 }
             }
         }
-        if(nasBooks.isEmpty()&&!smbPreferences.hasFolderSelection()){
+        if(nasBooks.isEmpty()&&sourceCount==0){
             TextView setup=text("左上の ☰ → NAS接続設定 → 読み取りフォルダ選択から始められます。",12,false);
             setup.setTextColor(subText);
             setup.setPadding(d(5),d(12),d(5),d(12));
@@ -418,7 +423,7 @@ public final class MainActivity extends Activity {
         }
         return image;
     }
-    private void cardText(LinearLayout card,String name,String author,boolean saved){
+    private void cardText(LinearLayout card,String name,String author,boolean saved,String key){
         TextView chip=statusChip(saved?"保存済み":"NAS",saved);
         LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);
         cp.topMargin=d(7);
@@ -430,11 +435,41 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams titleParam=new LinearLayout.LayoutParams(-1,-2);
         titleParam.topMargin=d(6);
         card.addView(bookTitle,titleParam);
+
+        // Download indicator sits BETWEEN book title and author.
+        // Muted empty track fills left-to-right with emerald as bytes arrive.
+        if(key!=null && transferPercents.containsKey(key)){
+            ProgressBar progress=new ProgressBar(this,null,
+                android.R.attr.progressBarStyleHorizontal);
+            progress.setIndeterminate(false);
+            progress.setMax(100);
+            progress.setProgress(Math.max(0,Math.min(100,transferPercents.get(key))));
+            progress.setProgressTintList(ColorStateList.valueOf(accent));
+            progress.setProgressBackgroundTintList(ColorStateList.valueOf(
+                Color.rgb(225,231,227)));
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,d(5));
+            lp.topMargin=d(9);lp.bottomMargin=d(7);
+            card.addView(progress,lp);
+            displayedProgress.put(key,progress);
+        }else{
+            View spacer=new View(this);
+            card.addView(spacer,new LinearLayout.LayoutParams(-1,d(8)));
+        }
         TextView by=subtle(author,10);
         by.setMaxLines(1);
         by.setEllipsize(android.text.TextUtils.TruncateAt.END);
         card.addView(by);
     }
+    private void showDownloadProgress(String bookKey,long transferred,long total){
+        int pct=total>0? (int)Math.min(100L,(100L*transferred)/total):0;
+        runOnUiThread(()->{
+            if(!transferPercents.containsKey(bookKey))return;
+            transferPercents.put(bookKey,pct);
+            ProgressBar bar=displayedProgress.get(bookKey);
+            if(bar!=null)bar.setProgress(pct,true);
+        });
+    }
+
     private void addSavedCard(LinearLayout row,JSONObject book,LinearLayout.LayoutParams params){
         LinearLayout card=bookCardBase(row,params);
         String id=book.optString("id","");
@@ -442,10 +477,9 @@ public final class MainActivity extends Activity {
         File cover=path.isEmpty()?null:new File(new File(library,id),path);
         ImageView image=bookImage(cover);
         card.addView(image,new LinearLayout.LayoutParams(-1,d(148)));
-        cardText(card,book.optString("title","名称未設定"),book.optString("author",""),true);
+        cardText(card,book.optString("title","名称未設定"),book.optString("author",""),true,id);
         String source=book.optString("source","");
-        SmbRepository.RemoteBook remote=source.isEmpty()?null:
-            new SmbRepository.RemoteBook(book.optString("title",""),source);
+        SmbRepository.RemoteBook remote=source.isEmpty()?null:remoteForBook(book);
         View.OnClickListener onClick=v->open(book);
         View.OnLongClickListener onLong=v->{
             showBookMenu(remote,book,null);return true;
@@ -460,10 +494,18 @@ public final class MainActivity extends Activity {
         String title=info==null?remote.name:info.optString("title",remote.name);
         String author=info==null?"":info.optString("author","");
         String coverPath=info==null?"":info.optString("cover","");
-        File cover=coverPath.isEmpty()?null:new File(new File(previews,remoteId(remote.path)),coverPath);
+        File cover=coverPath.isEmpty()?null:new File(new File(previews,remoteId(remote)),coverPath);
         ImageView image=bookImage(cover);
         card.addView(image,new LinearLayout.LayoutParams(-1,d(148)));
-        cardText(card,title,author,false);
+        cardText(card,title,author,false,remoteId(remote));
+        SecurePrefs.Profile origin=smbPreferences.profile(remote.profileId);
+        if(origin!=null && smbPreferences.listProfiles().size()>1){
+            TextView source=subtle(origin.name,9);
+            source.setSingleLine(true);
+            source.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            source.setPadding(0,d(5),0,0);
+            card.addView(source);
+        }
         View.OnClickListener onClick=v->showPreviewTap(remote);
         View.OnLongClickListener onLong=v->{
             showBookMenu(remote,null,info);return true;
@@ -500,7 +542,7 @@ public final class MainActivity extends Activity {
         TextView appTitle=text("  読書棚",24,true);
         appTitle.setTextColor(accent);
         panel.addView(appTitle);
-        TextView slogan=subtle("    NAS EPUB READER  ·  v0.4.6",11);
+        TextView slogan=subtle("    NAS EPUB READER  ·  v0.4.9",11);
         slogan.setPadding(0,d(5),0,d(20));
         panel.addView(slogan);
         ScrollView scroll=new ScrollView(this);
@@ -509,8 +551,9 @@ public final class MainActivity extends Activity {
         panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         addDrawerItem(list,"▦","本棚","保存済みとNASの本",()->shelf(),dialog);
         addDrawerItem(list,"↻","NASの本を更新","フォルダ内のEPUBを再検索",()->refreshNas(),dialog);
-        addDrawerItem(list,"⌂","NAS接続設定","共有・ユーザー・パスワード",()->showSmbSettings(),dialog);
-        addDrawerItem(list,"▤","読み取りフォルダ選択","SMBフォルダを参照",()->startFolderBrowser(),dialog);
+        addDrawerItem(list,"⌂","NAS接続先を管理","複数NASの追加・切替・削除",()->showProfileManager(),dialog);
+        addDrawerItem(list,"✎","接続先の編集","選択中のNASの認証設定",()->showSmbSettings(),dialog);
+        addDrawerItem(list,"▤","読み取りフォルダ選択","選択中のNASでフォルダを参照",()->startFolderBrowser(),dialog);
         addDrawerItem(list,"◇","内蔵Tailscale","外出先接続と通信診断",()->showTailnetPanel(),dialog);
         addDrawerItem(list,"＋","端末のEPUBを追加","ローカルファイルから取り込む",()->pick(),dialog);
         addDrawerItem(list,"◷","読書設定","文字の大きさ",()->showReaderSettings(),dialog);
@@ -595,7 +638,7 @@ public final class MainActivity extends Activity {
     private void showAppInfo(){
         new AlertDialog.Builder(this)
             .setTitle("NAS EPUB Reader")
-            .setMessage("Version 0.4.6\n\n"
+            .setMessage("Version 0.4.9\n\n"
                 +"NAS内のEPUBを表紙付きで管理できる読書アプリです。"
                 +"表紙を長押しすると書籍メニューが開きます。\n"
                 +"本文のダウンロードはWi-Fi接続時のみ可能です。\n"
@@ -604,64 +647,98 @@ public final class MainActivity extends Activity {
             .setPositiveButton("閉じる",null).show();
     }
 
-    private String remoteId(String filePath){
+    private String remoteId(String path){return idFor(smbSettings,path);}
+    private String idFor(SmbRepository.Settings cfg,String path){
         try{
             MessageDigest md=MessageDigest.getInstance("SHA-256");
-            String key=smbSettings.host+"|"+smbSettings.share+"|"+filePath;
+            String key=cfg.host+"|"+cfg.share+"|"+path;
             byte[] bytes=md.digest(key.getBytes(StandardCharsets.UTF_8));
             StringBuilder b=new StringBuilder("nas-");
             for(int i=0;i<12;i++)b.append(String.format(Locale.ROOT,"%02x",bytes[i]&255));
             return b.toString();
         }catch(Exception e){return "nas-fallback";}
     }
+    private SmbRepository.Settings settingsFor(SmbRepository.RemoteBook item){
+        SecurePrefs.Profile profile=smbPreferences.profile(item.profileId);
+        if(profile==null)throw new IllegalArgumentException("NAS接続先が削除されています");
+        return profile.settings.copy();
+    }
+    private String remoteId(SmbRepository.RemoteBook item){
+        return idFor(settingsFor(item),item.path);
+    }
+    private SmbRepository.RemoteBook remoteForBook(JSONObject book){
+        String source=book.optString("source","");
+        String id=book.optString("id","");
+        if(source.isEmpty())return null;
+        for(SecurePrefs.Profile p:smbPreferences.listProfiles()){
+            if(idFor(p.settings,source).equals(id))
+                return new SmbRepository.RemoteBook(book.optString("title",""),
+                    source,p.id);
+        }
+        return null;
+    }
     private JSONObject cachedRemote(SmbRepository.RemoteBook remote){
-        try {
-            String id=remoteId(remote.path);
+        try{
+            String id=remoteId(remote);
             File metadata=new File(new File(library,id),"book.json");
             if(!metadata.isFile())return null;
             JSONObject obj=new JSONObject(new String(readFile(metadata,500000),StandardCharsets.UTF_8));
             return id.equals(obj.optString("id"))?obj:null;
         }catch(Exception e){return null;}
     }
-    private String indexKey(){
-        return smbSettings.host+"|"+smbSettings.share+"|"+smbSettings.folder;
+    private String indexKey(SmbRepository.Settings cfg){
+        return cfg.host+"|"+cfg.share+"|"+cfg.folder;
     }
     private void saveRemoteIndex(){
+        android.content.SharedPreferences.Editor editor=
+            getSharedPreferences("book_index_v1",MODE_PRIVATE).edit();
         try{
-            JSONObject data=new JSONObject();
-            data.put("key",indexKey());
-            JSONArray names=new JSONArray();
-            for(SmbRepository.RemoteBook b:nasBooks){
-                JSONObject item=new JSONObject();item.put("name",b.name);item.put("path",b.path);
-                names.put(item);
+            for(SecurePrefs.Profile p:smbPreferences.listProfiles()){
+                if(!p.folderSelected)continue;
+                JSONObject data=new JSONObject();
+                data.put("key",indexKey(p.settings));
+                JSONArray names=new JSONArray();
+                for(SmbRepository.RemoteBook book:nasBooks){
+                    if(!book.profileId.equals(p.id))continue;
+                    JSONObject item=new JSONObject();
+                    item.put("name",book.name);item.put("path",book.path);
+                    names.put(item);
+                }
+                data.put("books",names);
+                editor.putString("index_"+p.id,data.toString());
             }
-            data.put("books",names);
-            getSharedPreferences("book_index_v1",MODE_PRIVATE).edit()
-                .putString("index",data.toString()).apply();
+            editor.apply();
         }catch(Exception ignored){}
     }
     private void loadSavedIndex(){
-        try{
-            String raw=getSharedPreferences("book_index_v1",MODE_PRIVATE).getString("index","");
-            if(raw.isEmpty())return;
-            JSONObject data=new JSONObject(raw);
-            if(!indexKey().equals(data.optString("key")))return;
-            JSONArray items=data.optJSONArray("books");
-            if(items==null)return;
-            nasBooks.clear();
-            for(int i=0;i<Math.min(items.length(),350);i++){
-                JSONObject x=items.optJSONObject(i);
-                if(x==null)continue;
-                String name=x.optString("name",""),path=x.optString("path","");
-                if(name.toLowerCase(Locale.ROOT).endsWith(".epub")&&!path.isEmpty())
-                    nasBooks.add(new SmbRepository.RemoteBook(name,path));
-            }
-            if(!nasBooks.isEmpty())nasStatus="保存済み本棚: "+nasBooks.size()+"冊（更新でNASと同期）";
-        }catch(Exception ignored){}
+        nasBooks.clear();
+        android.content.SharedPreferences index=
+            getSharedPreferences("book_index_v1",MODE_PRIVATE);
+        for(SecurePrefs.Profile p:smbPreferences.listProfiles()){
+            if(!p.folderSelected)continue;
+            try{
+                String raw=index.getString("index_"+p.id,"");
+                if(raw.isEmpty() && "primary".equals(p.id))
+                    raw=index.getString("index","");
+                if(raw.isEmpty())continue;
+                JSONObject data=new JSONObject(raw);
+                if(!indexKey(p.settings).equals(data.optString("key")))continue;
+                JSONArray items=data.optJSONArray("books");
+                if(items==null)continue;
+                for(int i=0;i<Math.min(items.length(),350);i++){
+                    JSONObject x=items.optJSONObject(i);
+                    if(x==null)continue;
+                    String name=x.optString("name",""),path=x.optString("path","");
+                    if(name.toLowerCase(Locale.ROOT).endsWith(".epub")&&!path.isEmpty())
+                        nasBooks.add(new SmbRepository.RemoteBook(name,path,p.id));
+                }
+            }catch(Exception ignored){}
+        }
+        if(!nasBooks.isEmpty())nasStatus="本棚キャッシュ: "+nasBooks.size()+"冊（更新でNASと同期）";
     }
     private JSONObject cachedPreview(SmbRepository.RemoteBook remote){
         try{
-            String id=remoteId(remote.path);
+            String id=remoteId(remote);
             File f=new File(new File(previews,id),"preview.json");
             if(!f.isFile() || f.length()>500000)return null;
             JSONObject data=new JSONObject(new String(readFile(f,500000),StandardCharsets.UTF_8));
@@ -672,12 +749,13 @@ public final class MainActivity extends Activity {
     private JSONObject fetchPreview(SmbRepository.Settings cfg,SmbRepository.RemoteBook item)throws Exception{
         JSONObject hit=cachedPreview(item);
         if(hit!=null)return hit;
-        String id=remoteId(item.path);
+        String id=remoteId(item);
         File dir=new File(previews,id);
         try{
             EpubParser.BookInfo parsed=SmbRepository.preview(cfg,item.path,dir);
             JSONObject data=new JSONObject();
             data.put("id",id);data.put("source",item.path);
+            data.put("profile_id",item.profileId);
             data.put("title",parsed.title);data.put("author",parsed.author);
             data.put("cover",parsed.cover);
             try(FileOutputStream out=new FileOutputStream(new File(dir,"preview.json"))){
@@ -695,7 +773,7 @@ public final class MainActivity extends Activity {
         ImageView image=new ImageView(this);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         image.setBackgroundColor(Color.rgb(232,235,238));
-        File cover=new File(new File(previews,remoteId(remote.path)),info.optString("cover",""));
+        File cover=new File(new File(previews,remoteId(remote)),info.optString("cover",""));
         if(!info.optString("cover").isEmpty()&&cover.isFile()){
             BitmapFactory.Options opts=new BitmapFactory.Options();
             opts.inSampleSize=4;
@@ -723,7 +801,7 @@ public final class MainActivity extends Activity {
         if(nasBooks.isEmpty())return;
         int remaining=0,withoutPreview=0;
         for(SmbRepository.RemoteBook item:nasBooks){
-            if(isHidden(remoteId(item.path)) || cachedRemote(item)!=null)continue;
+            if(isHidden(remoteId(item)) || cachedRemote(item)!=null)continue;
             remaining++;
             if(cachedPreview(item)==null)withoutPreview++;
         }
@@ -735,7 +813,7 @@ public final class MainActivity extends Activity {
             list.addView(button("表紙だけ軽量取得（最大12冊ずつ）",v->syncNasCovers()));
         int shown=0;
         for(SmbRepository.RemoteBook item:nasBooks){
-            if(isHidden(remoteId(item.path)) || cachedRemote(item)!=null)continue;
+            if(isHidden(remoteId(item)) || cachedRemote(item)!=null)continue;
             if(shown++>=120){
                 list.addView(text("ほかのファイルもあります。検索範囲を絞ってください。",12,false));
                 break;
@@ -765,6 +843,93 @@ public final class MainActivity extends Activity {
         field.setText(value);
         return field;
     }
+    private void showProfileManager(){
+        List<SecurePrefs.Profile> profiles=smbPreferences.listProfiles();
+        List<String> actions=new ArrayList<>();
+        String active=smbPreferences.activeId();
+        for(SecurePrefs.Profile p:profiles){
+            String target=p.settings.host.isEmpty()?"未設定":p.settings.host;
+            actions.add((p.id.equals(active)?"● ":"○ ")+p.name
+                +"  /  "+target+(p.folderSelected?"":"  [フォルダ未選択]"));
+        }
+        actions.add("＋ NAS接続先を追加");
+        actions.add("✎ 選択中の接続先を編集");
+        actions.add("▤ 選択中の読み取りフォルダを設定");
+        actions.add("⋮ 選択中の接続先を変更・削除");
+        actions.add("↻ すべてのNASを更新");
+        new AlertDialog.Builder(this).setTitle("NAS接続先  ·  "+profiles.size()+"件")
+            .setItems(actions.toArray(new String[0]),(dialog,which)->{
+                if(which<profiles.size()){
+                    SecurePrefs.Profile profile=profiles.get(which);
+                    smbPreferences.select(profile.id);
+                    smbSettings=smbPreferences.load();
+                    nasStatus="接続先を選択: "+profile.name;
+                    shelf();
+                    Toast.makeText(this,profile.name+" を選択しました",
+                        Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                switch(which-profiles.size()){
+                    case 0: addNasProfile();break;
+                    case 1: showSmbSettings();break;
+                    case 2: startFolderBrowser();break;
+                    case 3: editProfileActions();break;
+                    default: refreshNas();
+                }
+            }).setNegativeButton("閉じる",null).show();
+    }
+    private void addNasProfile(){
+        EditText name=settingField("例: 自宅NAS / 研究室NAS","",
+            InputType.TYPE_CLASS_TEXT);
+        new AlertDialog.Builder(this).setTitle("新しいNAS接続先")
+            .setMessage("接続先ごとにホスト・共有・フォルダを設定できます。")
+            .setView(name)
+            .setNegativeButton("キャンセル",null)
+            .setPositiveButton("追加",(dialog,which)->{
+                try{
+                    smbPreferences.add(name.getText().toString());
+                    smbSettings=smbPreferences.load();
+                    shelf();
+                    showSmbSettings();
+                }catch(Exception e){
+                    new AlertDialog.Builder(this).setTitle("追加できません")
+                        .setMessage(friendly(e)).setPositiveButton("閉じる",null).show();
+                }
+            }).show();
+    }
+    private void editProfileActions(){
+        SecurePrefs.Profile p=smbPreferences.profile(smbPreferences.activeId());
+        if(p==null)return;
+        new AlertDialog.Builder(this).setTitle(p.name)
+            .setItems(new String[]{"名前を変更","この接続先を削除"},(dialog,which)->{
+                if(which==0){
+                    EditText field=settingField("接続先名",p.name,InputType.TYPE_CLASS_TEXT);
+                    new AlertDialog.Builder(this).setTitle("接続先の名前")
+                        .setView(field).setNegativeButton("キャンセル",null)
+                        .setPositiveButton("保存",(d,w)->{
+                            try{smbPreferences.rename(p.id,field.getText().toString());shelf();}
+                            catch(Exception e){Toast.makeText(this,friendly(e),
+                                Toast.LENGTH_LONG).show();}
+                        }).show();
+                }else{
+                    new AlertDialog.Builder(this).setTitle("接続先を削除しますか？")
+                        .setMessage("接続設定のみ削除します。"
+                            +"NASの原本や端末内に保存済みの本は削除しません。")
+                        .setNegativeButton("キャンセル",null)
+                        .setPositiveButton("削除",(d,w)->{
+                            try{
+                                smbPreferences.remove(p.id);
+                                smbSettings=smbPreferences.load();
+                                loadSavedIndex();
+                                shelf();
+                            }catch(Exception e){
+                                Toast.makeText(this,friendly(e),Toast.LENGTH_LONG).show();
+                            }
+                        }).show();
+                }
+            }).setNegativeButton("閉じる",null).show();
+    }
+
     private void showSmbSettings(){
         ScrollView view=new ScrollView(this);
         LinearLayout columns=layout(false);
@@ -801,7 +966,8 @@ public final class MainActivity extends Activity {
                 smbPreferences.save(next);
                 if(locationChanged)smbPreferences.setFolderSelected(false);
                 smbSettings=next;
-                nasBooks.clear();
+                if(locationChanged)
+                    nasBooks.removeIf(book->book.profileId.equals(smbPreferences.activeId()));
                 dialog.dismiss();
                 loadFolder(locationChanged?"":next.folder);
             }catch(Exception e){
@@ -970,7 +1136,7 @@ public final class MainActivity extends Activity {
             smbPreferences.save(chosen);
             smbPreferences.setFolderSelected(true);
             smbSettings=chosen;
-            nasBooks.clear();
+            nasBooks.removeIf(book->book.profileId.equals(smbPreferences.activeId()));
             nasStatus="読み取り先を保存しました。EPUBを検索します…";
             leaveBrowser();
             refreshNas();
@@ -982,37 +1148,63 @@ public final class MainActivity extends Activity {
 
     private void refreshNas(){
         if(nasBusy)return;
-        if(!smbPreferences.hasFolderSelection()){
-            startFolderBrowser();
+        List<SecurePrefs.Profile> sources=new ArrayList<>();
+        for(SecurePrefs.Profile p:smbPreferences.listProfiles())
+            if(p.folderSelected && !p.settings.share.isEmpty()
+                && !p.settings.host.isEmpty())sources.add(p);
+        if(sources.isEmpty()){
+            if(!smbPreferences.hasFolderSelection())startFolderBrowser();
+            else showProfileManager();
             return;
         }
-        SmbRepository.Settings cfg=smbSettings.copy();
-        try{cfg.validate();}catch(Exception e){showSmbSettings();return;}
-        nasBusy=true;nasStatus="NASへ接続しています…";shelf();
+        nasBusy=true;
+        nasStatus="登録済み "+sources.size()+"カ所のNASを更新しています…";
+        shelf();
         new Thread(()->{
-            try{
-                List<SmbRepository.RemoteBook> results=SmbRepository.list(cfg);
-                results.sort(Comparator.comparing(x->x.name.toLowerCase(Locale.ROOT)));
-                runOnUiThread(()->{
-                    nasBooks.clear();nasBooks.addAll(results);
-                    saveRemoteIndex();
-                    nasStatus="NAS接続成功: EPUB "+results.size()+"冊";
-                    nasBusy=false;shelf();
-                    // Show the book list immediately; fetch only small cover previews in the background.
-                    for(SmbRepository.RemoteBook item:results){
-                        if(!isHidden(remoteId(item.path))
-                            && cachedRemote(item)==null && cachedPreview(item)==null){
-                            syncNasCovers();
-                            break;
-                        }
-                    }
-                });
-            }catch(Exception e){
-                runOnUiThread(()->{
-                    nasStatus="接続失敗: "+friendly(e);nasBusy=false;shelf();
-                });
+            int success=0,failed=0;
+            String firstError="";
+            Map<String,List<SmbRepository.RemoteBook>> byProfile=new LinkedHashMap<>();
+            for(SecurePrefs.Profile p:sources){
+                try{
+                    SmbRepository.Settings settings=p.settings.copy();
+                    settings.validate();
+                    List<SmbRepository.RemoteBook> fetched=SmbRepository.list(settings);
+                    List<SmbRepository.RemoteBook> tagged=new ArrayList<>();
+                    for(SmbRepository.RemoteBook book:fetched)
+                        tagged.add(new SmbRepository.RemoteBook(book.name,book.path,p.id));
+                    byProfile.put(p.id,tagged);
+                    success++;
+                }catch(Exception e){
+                    failed++;
+                    if(firstError.isEmpty())firstError=p.name+": "+friendly(e);
+                }
+                final int done=success+failed;
+                runOnUiThread(()->reportTransfer("NASを検索中: "+done+"/"+sources.size()+"カ所"));
             }
-        },"smb-list").start();
+            final int ok=success,bad=failed;
+            final String error=firstError;
+            runOnUiThread(()->{
+                // Preserve cached entries for any source that failed.
+                for(Map.Entry<String,List<SmbRepository.RemoteBook>> entry:byProfile.entrySet()){
+                    nasBooks.removeIf(book->book.profileId.equals(entry.getKey()));
+                    nasBooks.addAll(entry.getValue());
+                }
+                nasBooks.sort(Comparator.comparing(x->x.name.toLowerCase(Locale.ROOT)));
+                saveRemoteIndex();
+                nasBusy=false;
+                nasStatus="NAS更新: "+ok+"/"+sources.size()+"カ所成功・"
+                    +nasBooks.size()+"冊"+(bad>0?"／失敗: "+error:"");
+                shelf();
+                boolean needsCover=false;
+                for(SmbRepository.RemoteBook item:nasBooks){
+                    if(!isHidden(remoteId(item))
+                        && cachedRemote(item)==null && cachedPreview(item)==null){
+                        needsCover=true;break;
+                    }
+                }
+                if(needsCover)syncNasCovers();
+            });
+        },"smb-list-all").start();
     }
     private String friendly(Exception e){
         String message=e.getMessage();
@@ -1067,7 +1259,7 @@ public final class MainActivity extends Activity {
             }).show();
     }
     private JSONObject fetchRemote(SmbRepository.Settings cfg,SmbRepository.RemoteBook item) throws Exception {
-        String id=remoteId(item.path);
+        String id=remoteId(item);
         JSONObject cached=cachedRemote(item);
         if(cached!=null)return cached;
         File dir=new File(library,id);
@@ -1075,8 +1267,16 @@ public final class MainActivity extends Activity {
         try{
             reportTransfer("SMBからEPUBを取得中: "+item.name+"（0 KB）");
             SmbRepository.download(cfg,item.path,temp,150L*1024*1024,
-                bytes->reportTransfer("SMBからEPUBを取得中: "+item.name
-                    +"（"+(bytes/1024L)+" KB）"),this::isWifiConnected);
+                new SmbRepository.DownloadProgress(){
+                    @Override public void onBytes(long bytes){
+                        reportTransfer("SMBからEPUBを取得中: "+item.name
+                            +"（"+(bytes/1024L)+" KB）");
+                    }
+                    @Override public void onProgress(long bytes,long total){
+                        onBytes(bytes);
+                        showDownloadProgress(id,bytes,total);
+                    }
+                },this::isWifiConnected);
             reportTransfer("転送完了。EPUBを解析中: "+item.name
                 +"（"+(temp.length()/1024L)+" KB）");
             EpubParser.BookInfo info=EpubParser.extractAndParse(temp,dir);
@@ -1084,6 +1284,7 @@ public final class MainActivity extends Activity {
             obj.put("id",id);obj.put("title",info.title);
             obj.put("author",info.author);obj.put("cover",info.cover);
             obj.put("source",item.path);
+            obj.put("profile_id",item.profileId);
             JSONArray pages=new JSONArray();
             for(String chapter:info.chapters)pages.put(chapter);
             obj.put("chapters",pages);
@@ -1112,7 +1313,7 @@ public final class MainActivity extends Activity {
     private boolean isHidden(String id){return getHiddenIds().contains(id);}
     private void hideRemoteBook(SmbRepository.RemoteBook remote){
         Set<String> hidden=getHiddenIds();
-        hidden.add(remoteId(remote.path));
+        hidden.add(remoteId(remote));
         getSharedPreferences("hidden_books_v1",MODE_PRIVATE)
             .edit().putStringSet("hidden",hidden).apply();
         shelf();
@@ -1128,13 +1329,13 @@ public final class MainActivity extends Activity {
             Toast.makeText(this,"別の処理が実行中です",Toast.LENGTH_SHORT).show();
             return;
         }
-        SmbRepository.Settings cfg=smbSettings.copy();
+        SmbRepository.Settings cfg=settingsFor(remote);
         nasBusy=true;
         nasStatus="オンライン読書を準備中: "+remote.name;
         shelf();
         new Thread(()->{
             try{
-                final String id=remoteId(remote.path);
+                final String id=remoteId(remote);
                 File dir=new File(previews,id);
                 EpubParser.BookInfo info;
                 try{
@@ -1146,6 +1347,7 @@ public final class MainActivity extends Activity {
                     info=SmbRepository.preview(cfg,remote.path,dir);
                     JSONObject preview=new JSONObject();
                     preview.put("id",id);preview.put("source",remote.path);
+                    preview.put("profile_id",remote.profileId);
                     preview.put("title",info.title);preview.put("author",info.author);
                     preview.put("cover",info.cover);
                     try(OutputStream out=new FileOutputStream(new File(dir,"preview.json"))){
@@ -1158,6 +1360,7 @@ public final class MainActivity extends Activity {
                 book.put("author",info.author);
                 book.put("cover",info.cover);
                 book.put("source",remote.path);
+                book.put("profile_id",remote.profileId);
                 JSONArray chapters=new JSONArray();
                 for(String path:info.chapters)chapters.put(path);
                 book.put("chapters",chapters);
@@ -1212,7 +1415,7 @@ public final class MainActivity extends Activity {
                         .setPositiveButton("非表示にする",(d,w)->hideRemoteBook(remote))
                         .show();
                 }else if(selected.startsWith("🖼") && remote!=null){
-                    File dir=new File(previews,remoteId(remote.path));
+                    File dir=new File(previews,remoteId(remote));
                     if(isDirectChild(previews,dir))delete(dir);
                     shelf();
                     Toast.makeText(this,"表紙キャッシュだけ削除しました",Toast.LENGTH_SHORT).show();
@@ -1221,7 +1424,9 @@ public final class MainActivity extends Activity {
                         +"\n"+(book!=null?book.optString("author","")
                         :preview!=null?preview.optString("author",""):"")
                         +"\n本文: "+(downloaded?"端末に保存済み":"未保存")
-                        +"\n原本: "+(remote!=null?"NAS（変更しません）":"端末");
+                        +"\n原本: "+(remote!=null?"NAS（変更しません）":"端末")
+                        +(remote!=null && smbPreferences.profile(remote.profileId)!=null
+                            ?"\n接続先: "+smbPreferences.profile(remote.profileId).name:"");
                     new AlertDialog.Builder(this).setTitle("書籍情報").setMessage(detail)
                         .setPositiveButton("閉じる",null).show();
                 }
@@ -1265,18 +1470,22 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("閉じる",null).show();
             return;
         }
-        SmbRepository.Settings cfg=smbSettings.copy();
+        SmbRepository.Settings cfg=settingsFor(item);
+        final String key=remoteId(item);
+        transferPercents.put(key,0);
         nasBusy=true;nasStatus="Wi-FiでEPUB本文を取得中: "+item.name;shelf();
         new Thread(()->{
             try{
                 JSONObject book=fetchRemote(cfg,item);
                 runOnUiThread(()->{
+                    transferPercents.remove(key);
                     nasBusy=false;nasStatus="Wi-Fiで本文を保存しました: "+item.name;
                     shelf();
                     Toast.makeText(this,"本文を保存しました。表紙をタップすると読めます",Toast.LENGTH_LONG).show();
                 });
             }catch(Exception e){
                 runOnUiThread(()->{
+                    transferPercents.remove(key);
                     nasBusy=false;nasStatus="本文取得失敗: "+friendly(e);
                     shelf();
                     showTransferError("本文ダウンロードに失敗しました",e);
@@ -1286,10 +1495,9 @@ public final class MainActivity extends Activity {
     }
     private void syncNasCovers(){
         if(nasBusy)return;
-        SmbRepository.Settings cfg=smbSettings.copy();
         List<SmbRepository.RemoteBook> queue=new ArrayList<>();
         for(SmbRepository.RemoteBook item:nasBooks){
-            if(!isHidden(remoteId(item.path))
+            if(!isHidden(remoteId(item))
                 && cachedRemote(item)==null && cachedPreview(item)==null && queue.size()<12)
                 queue.add(item);
         }
@@ -1302,7 +1510,7 @@ public final class MainActivity extends Activity {
             Exception error=null;String filename="";
             for(SmbRepository.RemoteBook item:queue){
                 reportTransfer("表紙・書誌情報だけ取得中: "+item.name+" ("+(ok+fail+1)+"/"+queue.size()+")");
-                try{fetchPreview(cfg,item);ok++;}
+                try{fetchPreview(settingsFor(item),item);ok++;}
                 catch(Exception e){
                     fail++;
                     if(error==null){error=e;filename=item.name;}
