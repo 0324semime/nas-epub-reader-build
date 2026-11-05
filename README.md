@@ -1,3 +1,15 @@
+# NAS EPUB Thor v0.5.4 alpha5 — LEFT page 1, RIGHT page 2
+
+## Change requested after confirmed image-based EPUB reading
+- **Physical lower display = left first page (1P)**; **physical upper display = right second page (2P)**.
+- Fixed-layout EPUB display now maps the first image index to the lower/left page and the immediately following index to the upper/right page. Preserves FIT_CENTER full-page rendering, no cropping, screen rotation and page decode.
+- Text-only EPUB mode paginates the *lower left first*, then starts the *upper right* exactly at the left page's continuation cursor. Next advances to the end of the upper/right page.
+- Next and previous continue moving one pair (two page images or two blocks of text). Previously stored image-page pair index, bookmark and progress remain valid.
+- Reader page labels, progress and Aa menu now describe **left ① → right ②** correctly.
+- This is a page-order change only. No edits to EPUB parser, Tailscale, SMB, display orientation, cache, or the standard NAS EPUB Reader app.
+- Requires on-device check of the two page positions; official image/book details are already confirmed from the user's alpha4 test.
+
+## Previous release notes
 # NAS EPUB Thor v0.5.3 alpha4 — fixed-layout picture pages
 
 ## Actual on-device bug and confirmed cause

@@ -276,7 +276,7 @@ public final class ThorDualReader {
         settingsParam.leftMargin=dp(5);
         header.addView(settings,settingsParam);
 
-        TextView hint=label(host,verticalSpread?"RIGHT PAGE  ·  右ページ（先に読む）":"上画面  ·  先に読む",11,false);
+        TextView hint=label(host,verticalSpread?"RIGHT PAGE ② · 右ページ（2ページ目）":"上画面 ② · 2ページ目",11,false);
         hint.setTextColor(muted());
         hint.setPadding(dp(4),dp(12),0,dp(5));
         topLayout.addView(hint);
@@ -332,8 +332,8 @@ public final class ThorDualReader {
         panel.setBackgroundColor(paper());
 
         TextView label=label(ctx,verticalSpread
-            ?"LEFT PAGE  ②  ·  左ページ"
-            :"下画面 ②  ·  続き",11,true);
+            ?"LEFT PAGE ① · 左ページ（1ページ目）"
+            :"下画面 ① · 先に読む",11,true);
         label.setTextColor(muted());
         label.setGravity(Gravity.CENTER_VERTICAL);
         label.setPadding(dp(ctx,7),0,0,0);
@@ -362,7 +362,7 @@ public final class ThorDualReader {
 
         // Keep controls minimal until two physical pages have been verified.
         // Next/previous and display settings remain on the top screen.
-        bottomStatus=label(ctx,"LEFT ②",11,false);
+        bottomStatus=label(ctx,"LEFT ①",11,false);
         bottomStatus.setTextColor(muted());
         bottomStatus.setGravity(Gravity.CENTER);
         panel.addView(bottomStatus,new LinearLayout.LayoutParams(-1,dp(ctx,24)));
@@ -542,16 +542,18 @@ public final class ThorDualReader {
             return;
         }
         imageIndex=Math.max(0,Math.min(imageIndex,imagePages.size()-1));
+        // "imageIndex" is the first page of each 2-page spread.
+        // Physically: LOWER display is LEFT PAGE 1, UPPER display is RIGHT PAGE 2.
+        // Keep the same index/history/bookmarks so alpha4 reading positions survive.
         cursor=new Cursor(imagePages.get(imageIndex).chapter,0);
-        showImagePage(topPicture,imageIndex);
-        showImagePage(bottomPicture,imageIndex+1);
+        showImagePage(bottomPicture,imageIndex);
+        showImagePage(topPicture,imageIndex+1);
         nextCursor=new Cursor(Math.min(chapters.length(),cursor.chapter+2),0);
-        int right=imageIndex+1;
-        int left=Math.min(imagePages.size(),imageIndex+2);
-        topStatus.setText("画像の本  ·  右 "+right+" / "+imagePages.size()
-            +"  → 左 "+left);
-        bottomStatus.setText("左ページ  ·  "+
-            (imageIndex+1<imagePages.size()?left+" / "+imagePages.size():"終わり"));
+        int left=imageIndex+1;
+        int right=imageIndex+2;
+        topStatus.setText("画像の本  ·  左 "+left+" → 右 "+
+            (right<=imagePages.size()?right:"終わり")+" / "+imagePages.size());
+        bottomStatus.setText("左ページ ①  ·  "+left+" / "+imagePages.size());
         if(topMark!=null)topMark.setText(isMarked(cursor)?"◆":"◇");
         save();
     }
@@ -569,19 +571,21 @@ public final class ThorDualReader {
         drawing=true;
         try{
             cursor=normal(cursor);
-            Segment top=page(cursor,topText);
-            Segment bottom=page(top.end,bottomText);
-            topText.setPage(top.text.isEmpty()?"（本文の終わり）":top.text);
-            bottomText.setPage(bottom.text.isEmpty()?"この本の終わりです":bottom.text);
-            nextCursor=bottom.end;
+            // First consume the LEFT / LOWER page; its exact continuation
+            // begins the RIGHT / UPPER page. A next-pair tap starts AFTER both.
+            Segment bottom=page(cursor,bottomText);
+            Segment top=page(bottom.end,topText);
+            bottomText.setPage(bottom.text.isEmpty()?"（本文の終わり）":bottom.text);
+            topText.setPage(top.text.isEmpty()?"この本の終わりです":top.text);
+            nextCursor=top.end;
             int count=chapters.length();
             topStatus.setText(String.format(Locale.JAPAN,
-                verticalSpread?"右 ① → 左 ②  ·  %d / %d 章":"上 → 下  ·  %d / %d 章",
+                verticalSpread?"左 ① → 右 ②  ·  %d / %d 章":"下 ① → 上 ②  ·  %d / %d 章",
                 Math.min(count,cursor.chapter+1),count));
             bottomStatus.setText(String.format(Locale.JAPAN,
-                verticalSpread?"左ページ ②  ·  %d字":"下画面 ②  ·  %d字",
+                verticalSpread?"左ページ ①  ·  %d字":"下画面 ①  ·  %d字",
                 bottom.text.codePointCount(0,bottom.text.length())));
-            topStatus.setText(topStatus.getText()+"  ·  "+
+            topStatus.setText(topStatus.getText()+"  ·  右 "+
                 top.text.codePointCount(0,top.text.length())+"字");
             topMark.setText(isMarked(cursor)?"◆":"◇");
             save();
@@ -711,10 +715,10 @@ public final class ThorDualReader {
         area.addView(title);
         android.widget.RadioGroup modes=new android.widget.RadioGroup(host);
         android.widget.RadioButton vertical=new android.widget.RadioButton(host);
-        vertical.setText("日本語縦書き：右ページ → 左ページ");
+        vertical.setText("日本語縦書き：左ページ ① → 右ページ ②");
         vertical.setTextSize(13);vertical.setId(8101);modes.addView(vertical);
         android.widget.RadioButton horizontal=new android.widget.RadioButton(host);
-        horizontal.setText("横書き：上画面 → 下画面");
+        horizontal.setText("横書き：下画面 ① → 上画面 ②");
         horizontal.setTextSize(13);horizontal.setId(8102);modes.addView(horizontal);
         modes.check(verticalSpread?8101:8102);
         area.addView(modes);

@@ -489,7 +489,7 @@ public final class MainActivity extends Activity {
         addDrawerItem(list,"▤","読み取りフォルダ選択","SMBフォルダを参照",()->startFolderBrowser(),dialog);
         addDrawerItem(list,"◇","内蔵Tailscale","外出先接続と通信診断",()->showTailnetPanel(),dialog);
         addDrawerItem(list,"＋","端末のEPUBを追加","ローカルファイルから取り込む",()->pick(),dialog);
-        addDrawerItem(list,"▣","Thor 見開きモード","上＝右ページ・下＝左ページの縦書き表示",
+        addDrawerItem(list,"▣","Thor 見開きモード","下＝左1ページ・上＝右2ページの見開き表示",
             ()->showThorControls(),dialog);
         addDrawerItem(list,"◷","読書設定","文字の大きさ",()->showReaderSettings(),dialog);
         addDrawerItem(list,"▧","キャッシュ管理","表紙データの確認と削除",()->showCacheManager(),dialog);
@@ -1655,8 +1655,8 @@ public final class MainActivity extends Activity {
         String info=ThorDualReader.displays(this);
         new AlertDialog.Builder(this)
             .setTitle("Thor 専用見開き表示")
-            .setMessage("上画面＝右ページ（最初に読む）\n"
-                +"下画面＝左ページ（その続き）\n"
+            .setMessage("下画面＝左ページ（1ページ目・最初に読む）\n"
+                +"上画面＝右ページ（2ページ目・その続き）\n"
                 +"現在の表示方式: "+(spread?"縦書き・右から左":"横書き・上から下")
                 +"\n自動2画面読書: "+(enabled?"有効":"無効")
                 +"\n\n"+info

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.4-thor-alpha5
+- Reverse visible 2-page spread assignment: LOWER/LEFT shows page 1, UPPER/RIGHT shows page 2.
+- Apply the same reading order to image-based and text-based EPUBs.
+- Keep previous page-turn pair indexing, saved reading position and bookmark compatibility.
+- Update page labels, diagnostics and reader settings descriptions.
+- No changes to the ordinary Android app or the working EPUB image decoding.
+
+# Changelog
+
 ## v0.5.3-thor-alpha4
 - Fix repeated-book-title content by adding an image-based fixed-layout EPUB reader path.
 - Render actual printed-page images on upper/right and lower/left displays.
