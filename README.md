@@ -1,3 +1,25 @@
+# NAS EPUB Thor v0.5.3 alpha4 — fixed-layout picture pages
+
+## Actual on-device bug and confirmed cause
+The user reported a photo showing right/top and left/bottom panels filled with repeated "麻雀1年目の教科書" text instead of the book's real prose. The published e-book is a **fixed-layout, non-searchable**, 176-page illustrated work, while the old Thor renderer turned XHTML `<title>` metadata into fake prose and ignored the page images. The ~178 spine pages are consistent with a page-image based EPUB. The photo confirmed that previous rotation/page-area issues were solved.
+
+## This build
+- Add `FixedEpubPage.java` to inspect the EPUB's extracted XHTML for page image references (`<img src>`, SVG `<image href/xlink:href>` and CSS image URLs), with safe relative path resolution and bounds.
+- Detect an image-based spine by inspecting early chapters. When image layout is detected, **render the actual full-page images**, not extracted text: top screen displays right page, bottom screen the following left page.
+- `FIT_CENTER` maintains the original printed-page aspect ratio and prevents cropping on both differently sized displays. Bitmap decoding is sampled to moderate memory usage.
+- Each next/previous action advances by **two physical pages**. The page number and restored image position are saved separately from the reflow text cursor; bookmarks point to image page pairs.
+- Hide the native vertical text surfaces in image mode; continue to use normal Japanese vertical reflow pagination for text EPUBs.
+- Strip the XHTML `<head>` block before invoking Html.fromHtml for genuine text books, so metadata titles are not repeated as content.
+- Keep previous lower screen -90°/0°/+90° orientation control, independent font sizes and existing Thor Presentation management.
+
+## Limits and validation
+- The **real EPUB file has not been supplied** and the image-mode trigger/reference type is inferred from the screenshot and published book specs. The APK build can confirm compilation, not that the actual scanned pages load. The first real-device check is to confirm the footer says `画像の本` and actual book-page artwork appears.
+- Image mode supports raster JPEG, PNG, WebP, GIF and BMP page references; vector-only SVG pages, embedded data URLs and DRM-protected EPUBs need further work. Mixed-layout EPUBs may need fallback handling.
+- The full EPUB needs to have been downloaded/extracted within the Thor app (offline).
+- For image-based pages, letterboxing on the larger screen is intentional to maintain the printed page aspect; independent text size is not applicable to scanned page images.
+- The main branch and stable v0.4.6 are unchanged.
+
+## Earlier releases
 # NAS EPUB Thor — v0.5.2 alpha3: visible right/left pages
 
 ## Corrected from an actual Thor photograph
@@ -134,7 +156,4 @@ Add ruby/vertical layout and embedded images with a DOM-aware pagination engine 
 - Show live transferred bytes during EPUB file download, then switch to a parsing status after the download finishes.
 - Separate "EPUB received" from "EPUB parsed": transfer errors and metadata errors are distinguishable.
 - Add SMB network traffic telemetry to Go tsnet state (accepted connection count, bytes sent to NAS, bytes received from NAS, last transport error).
-- Replace premature teardown of bidirectional TCP streams with half-close and full drain: a probable cause for large SMB file transfer failures.
-- Keep the working NAS share browser, local bookshelf, and Tailscale login UX unchanged.
-- Debug logs never include passwords or Tailscale authorization tokens. The diagnostic may include the configured private NAS address and the filename.
-- **Test plan:** on mobile data, k
+- Replace premature teardown of bidirectional TCP streams with half-close and full drain: a probable cause for larg

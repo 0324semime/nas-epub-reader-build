@@ -6,6 +6,9 @@ import android.app.Presentation;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.widget.ImageView;
+import android.widget.FrameLayout;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -36,6 +39,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -87,6 +92,17 @@ public final class ThorDualReader {
     private Display presentationDisplay;
     private Presentation presentation;
     private ThorPageView topText,bottomText;
+    private ImageView topPicture,bottomPicture;
+    private boolean fixedImages;
+    private final List<FixedPagePosition> imagePages=new ArrayList<>();
+    private int imageIndex=0;
+    private static final class FixedPagePosition {
+        final int chapter;
+        final FixedEpubPage.Page file;
+        FixedPagePosition(int chapter,FixedEpubPage.Page file){
+            this.chapter=chapter;this.file=file;
+        }
+    }
     private TextView topStatus,bottomStatus,topMark;
     private LinearLayout topLayout,bottomLayout;
     private boolean verticalSpread;
@@ -116,6 +132,24 @@ public final class ThorDualReader {
         // sideways. The default correction can be changed in the Aa dialog.
         this.lowerRotation=normalizeRotation(prefs.getInt("bottom_rotation",-90));
         this.cursor=new Cursor(prefs.getInt("ch_"+id,0),prefs.getInt("offset_"+id,0));
+        // The user's EPUB is image-based (about one XHTML per scanned page).
+        // In this mode never treat <title> metadata as readable book text.
+        if(bookDir!=null && FixedEpubPage.isFixedBook(bookDir,chapters)){
+            for(int i=0;i<chapters.length();i++){
+                try{
+                    FixedEpubPage.Page page=FixedEpubPage.inspect(bookDir,
+                        chapters.optString(i,""));
+                    if(page.imagePage())imagePages.add(new FixedPagePosition(i,page));
+                }catch(Exception ignored){}
+            }
+            fixedImages=imagePages.size()>=4;
+            imageIndex=Math.max(0,Math.min(imagePages.size()-1,
+                prefs.getInt("fixed_img_"+id,0)));
+            if(fixedImages && !imagePages.isEmpty()){
+                cursor=new Cursor(imagePages.get(imageIndex).chapter,0);
+                history.clear();
+            }
+        }
         this.nextCursor=cursor;
         try{
             JSONArray old=new JSONArray(prefs.getString("history_"+id,"[]"));
@@ -251,11 +285,24 @@ public final class ThorDualReader {
         topText.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
             if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
         });
+        FrameLayout pageSurface=new FrameLayout(host);
+        pageSurface.addView(topText,new FrameLayout.LayoutParams(-1,-1));
+        topText.setOnClickListener(v->forward());
+        topPicture=new ImageView(host);
+        topPicture.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        topPicture.setBackgroundColor(paper());
+        topPicture.setPadding(dp(7),dp(7),dp(7),dp(7));
+        topPicture.setOnClickListener(v->forward());
+        topPicture.setVisibility(fixedImages?View.VISIBLE:View.GONE);
+        topText.setVisibility(fixedImages?View.GONE:View.VISIBLE);
+        pageSurface.addView(topPicture,new FrameLayout.LayoutParams(-1,-1));
+        pageSurface.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
+            if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
+        });
         LinearLayout.LayoutParams body=new LinearLayout.LayoutParams(-1,0,1);
         body.topMargin=dp(2);
         body.bottomMargin=dp(5);
-        topLayout.addView(topText,body);
-        topText.setOnClickListener(v->forward());
+        topLayout.addView(pageSurface,body);
 
         LinearLayout footer=new LinearLayout(host);
         footer.setGravity(Gravity.CENTER_VERTICAL);
@@ -296,9 +343,22 @@ public final class ThorDualReader {
         bottomText.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
             if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
         });
-        LinearLayout.LayoutParams body=new LinearLayout.LayoutParams(-1,0,1);
-        panel.addView(bottomText,body);
+        FrameLayout pageSurface=new FrameLayout(ctx);
+        pageSurface.addView(bottomText,new FrameLayout.LayoutParams(-1,-1));
         bottomText.setOnClickListener(v->forward());
+        bottomPicture=new ImageView(ctx);
+        bottomPicture.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        bottomPicture.setBackgroundColor(paper());
+        bottomPicture.setPadding(dp(ctx,5),dp(ctx,5),dp(ctx,5),dp(ctx,5));
+        bottomPicture.setOnClickListener(v->forward());
+        bottomPicture.setVisibility(fixedImages?View.VISIBLE:View.GONE);
+        bottomText.setVisibility(fixedImages?View.GONE:View.VISIBLE);
+        pageSurface.addView(bottomPicture,new FrameLayout.LayoutParams(-1,-1));
+        pageSurface.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
+            if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
+        });
+        LinearLayout.LayoutParams body=new LinearLayout.LayoutParams(-1,0,1);
+        panel.addView(pageSurface,body);
 
         // Keep controls minimal until two physical pages have been verified.
         // Next/previous and display settings remain on the top screen.
@@ -391,7 +451,11 @@ public final class ThorDualReader {
                 out.write(buf,0,n);
             }
             String html=new String(out.toByteArray(),StandardCharsets.UTF_8);
-            String plain=Html.fromHtml(html,Html.FROM_HTML_MODE_COMPACT)
+            // XHTML <head><title> is book metadata, not body content.
+            // In fixed-image EPUBs repeating that title on each spine item
+            // made the reader appear to print the book title endlessly.
+            String body=html.replaceFirst("(?is)<head\\b[^>]*>.*?</head\\s*>","");
+            String plain=Html.fromHtml(body,Html.FROM_HTML_MODE_COMPACT)
                 .toString().replace("\r","").replace("\u00a0"," ");
             // Keep breaks and Japanese punctuation, drop unhelpful runs of blanks.
             plain=plain.replaceAll("[ \t]{3,}","  ").replaceAll("\\n{4,}","\n\n\n").trim();
@@ -455,8 +519,48 @@ public final class ThorDualReader {
         Cursor end=advance(start,fit);
         return new Segment(start,end,reading.substring(0,fit));
     }
+    private void showImagePage(ImageView view,int page){
+        if(view==null)return;
+        if(page<0||page>=imagePages.size()){
+            view.setImageDrawable(null);
+            return;
+        }
+        File image=imagePages.get(page).file.image;
+        Bitmap bitmap=FixedEpubPage.decode(image,view.getWidth(),view.getHeight());
+        if(bitmap!=null)view.setImageBitmap(bitmap);
+        else {
+            view.setImageDrawable(null);
+            Toast.makeText(host,"画像ページを読み込めません: "+image.getName(),
+                Toast.LENGTH_SHORT).show();
+        }
+    }
+    private void drawImagePages(){
+        if(imagePages.isEmpty()||topPicture==null||bottomPicture==null)return;
+        if(topPicture.getWidth()<70||topPicture.getHeight()<70
+            ||bottomPicture.getWidth()<70||bottomPicture.getHeight()<70){
+            handler.postDelayed(()->drawPages(),160);
+            return;
+        }
+        imageIndex=Math.max(0,Math.min(imageIndex,imagePages.size()-1));
+        cursor=new Cursor(imagePages.get(imageIndex).chapter,0);
+        showImagePage(topPicture,imageIndex);
+        showImagePage(bottomPicture,imageIndex+1);
+        nextCursor=new Cursor(Math.min(chapters.length(),cursor.chapter+2),0);
+        int right=imageIndex+1;
+        int left=Math.min(imagePages.size(),imageIndex+2);
+        topStatus.setText("画像の本  ·  右 "+right+" / "+imagePages.size()
+            +"  → 左 "+left);
+        bottomStatus.setText("左ページ  ·  "+
+            (imageIndex+1<imagePages.size()?left+" / "+imagePages.size():"終わり"));
+        if(topMark!=null)topMark.setText(isMarked(cursor)?"◆":"◇");
+        save();
+    }
     private void drawPages(){
         if(!shown||closing||drawing||topText==null||bottomText==null)return;
+        if(fixedImages){
+            drawImagePages();
+            return;
+        }
         if(topText.getWidth()<70||topText.getHeight()<90
             ||bottomText.getWidth()<70||bottomText.getHeight()<90){
             handler.postDelayed(()->drawPages(),230);
@@ -497,9 +601,16 @@ public final class ThorDualReader {
         }
         prefs.edit().putInt("ch_"+id,cursor.chapter)
             .putInt("offset_"+id,cursor.offset)
+            .putInt("fixed_img_"+id,imageIndex)
             .putString("history_"+id,old.toString()).apply();
     }
     private void forward(){
+        if(fixedImages){
+            if(!shown || imageIndex+2>=imagePages.size())return;
+            imageIndex+=2;
+            drawPages();
+            return;
+        }
         if(!shown||nextCursor==null||nextCursor.same(cursor))return;
         if(nextCursor.chapter>=chapters.length())return;
         history.addLast(cursor);
@@ -509,6 +620,12 @@ public final class ThorDualReader {
         drawPages();
     }
     private void back(){
+        if(fixedImages){
+            if(!shown||imageIndex<2)return;
+            imageIndex-=2;
+            drawPages();
+            return;
+        }
         if(!shown||history.isEmpty())return;
         cursor=history.removeLast();
         save();
@@ -570,8 +687,19 @@ public final class ThorDualReader {
             .setItems(entries,(dialog,which)->{
                 JSONObject point=data.optJSONObject(which);
                 if(point!=null){
-                    cursor=new Cursor(point.optInt("ch",0),point.optInt("ofs",0));
-                    history.clear();drawPages();
+                    int markChapter=point.optInt("ch",0);
+                    if(fixedImages){
+                        for(int i=0;i<imagePages.size();i++){
+                            if(imagePages.get(i).chapter>=markChapter){
+                                imageIndex=(i/2)*2;
+                                break;
+                            }
+                        }
+                    }else{
+                        cursor=new Cursor(markChapter,point.optInt("ofs",0));
+                        history.clear();
+                    }
+                    drawPages();
                 }
             }).setNegativeButton("閉じる",null).show();
     }

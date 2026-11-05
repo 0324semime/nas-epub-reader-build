@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.3-thor-alpha4
+- Fix repeated-book-title content by adding an image-based fixed-layout EPUB reader path.
+- Render actual printed-page images on upper/right and lower/left displays.
+- Page-turn and bookmarks work with image-page pairs; image progress persists.
+- Strip HTML head metadata from reflowable text.
+- Keep the validated lower-display rotated layout.
+
+# Changelog
+
 ## v0.5.2-thor-alpha3
 - Fix sideways AYN Thor lower-screen Presentation with a measured, rotated display container.
 - Allow the user to choose -90, 0 or +90 degree lower-screen orientation.
