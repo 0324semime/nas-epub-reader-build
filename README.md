@@ -1,3 +1,15 @@
+# NAS EPUB Thor v0.5.6 alpha7 — tap direction based on physical screen
+
+## Requested controls
+- **Lower physical display / LEFT page:** tap anywhere on the reading image/text to move to the **previous 2-page spread**.
+- **Upper physical display / RIGHT page:** tap the reading image/text to move to the **next 2-page spread**.
+- Applies to both fixed-layout image EPUBs and the vertical reflow text mode; the underlying paired-page cursor, saved location, bookmarks and order are unchanged.
+- At the start/end of a book, tapping past the boundary leaves the book on the current spread.
+- Upper screen's separate previous/next buttons continue working.
+- Preserve immersive lower reading area with no labels and no margins, the image display, secondary-display rotation and all existing functionality.
+- No change to the ordinary NAS EPUB Reader or its main branch.
+
+## Previous releases
 # NAS EPUB Thor v0.5.5 alpha6 — maximum-size lower reading screen
 
 ## Requested lower-screen layout refinement

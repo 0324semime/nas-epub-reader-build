@@ -288,11 +288,13 @@ public final class ThorDualReader {
         FrameLayout pageSurface=new FrameLayout(host);
         pageSurface.addView(topText,new FrameLayout.LayoutParams(-1,-1));
         topText.setOnClickListener(v->forward());
+        topText.setContentDescription("右ページ：タップして次の見開きへ");
         topPicture=new ImageView(host);
         topPicture.setScaleType(ImageView.ScaleType.FIT_CENTER);
         topPicture.setBackgroundColor(paper());
         topPicture.setPadding(dp(7),dp(7),dp(7),dp(7));
         topPicture.setOnClickListener(v->forward());
+        topPicture.setContentDescription("右ページ：タップして次の見開きへ");
         topPicture.setVisibility(fixedImages?View.VISIBLE:View.GONE);
         topText.setVisibility(fixedImages?View.GONE:View.VISIBLE);
         pageSurface.addView(topPicture,new FrameLayout.LayoutParams(-1,-1));
@@ -344,14 +346,16 @@ public final class ThorDualReader {
         pageSurface.setPadding(0,0,0,0);
         pageSurface.setClipToPadding(false);
         pageSurface.addView(bottomText,new FrameLayout.LayoutParams(-1,-1));
-        bottomText.setOnClickListener(v->forward());
+        bottomText.setOnClickListener(v->back());
+        bottomText.setContentDescription("左ページ：タップして前の見開きへ");
 
         bottomPicture=new ImageView(ctx);
         bottomPicture.setScaleType(ImageView.ScaleType.FIT_CENTER);
         bottomPicture.setBackgroundColor(paper());
         bottomPicture.setPadding(0,0,0,0);
         bottomPicture.setAdjustViewBounds(false);
-        bottomPicture.setOnClickListener(v->forward());
+        bottomPicture.setOnClickListener(v->back());
+        bottomPicture.setContentDescription("左ページ：タップして前の見開きへ");
         bottomPicture.setVisibility(fixedImages?View.VISIBLE:View.GONE);
         bottomText.setVisibility(fixedImages?View.GONE:View.VISIBLE);
         pageSurface.addView(bottomPicture,new FrameLayout.LayoutParams(-1,-1));

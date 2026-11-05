@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.6-thor-alpha7
+- Tap lower/LEFT page to move back one spread (2 physical pages).
+- Tap upper/RIGHT page to advance one spread.
+- Apply to both image pages and text EPUB page surfaces.
+- Keep the full-size lower reading screen and prior controls unchanged.
+
+# Changelog
+
 ## v0.5.5-thor-alpha6
 - Maximize lower-screen reading surface: remove `LEFT PAGE` header and lower footer/page-number indicators.
 - Remove lower display container and bitmap padding; scale fixed-layout image to the full available canvas while preserving aspect ratio.
