@@ -1,3 +1,19 @@
+# NAS EPUB Thor v0.5.5 alpha6 — maximum-size lower reading screen
+
+## Requested lower-screen layout refinement
+- The entire AYN Thor **lower/LEFT page** is now dedicated to the book image. Removed the top-left `LEFT PAGE` text, the lower page-number strip, and all panel/image padding.
+- Added immersive system UI flags on the **lower Presentation window only** to request full-size content (hide the lower display's status and navigation bars where Android firmware allows). Upper display's controls and status bars are unaffected.
+- Keep `FIT_CENTER`: page artwork is enlarged to the maximum that completely fits the available screen **without cropping** or distorting its aspect ratio. Page images may still contain margins built into the original EPUB.
+- For reflowable vertical text EPUBs, reduce lower/left page text margins from 20dp to 7dp to improve usable reading area. Upper/right margins are unchanged.
+- Preserve the v0.5.4 page order: **lower LEFT page 1**, **upper RIGHT page 2**; next advances two pages.
+- Preserve the working v0.5.3 fixed-layout image decoder, display orientation -90° adjustment, SMB/Tailscale integration, bookmarks and saved page positions. The normal app is untouched.
+
+## Verification notes
+- Android APK compilation does not guarantee that device firmware will honor immersive flags for the secondary display. Test on the physical Thor.
+- Lower display has a near-square aspect ratio; tall page images may leave side letterboxing under FIT_CENTER. This is deliberate to avoid cutting off content.
+- No new buttons added to the lower screen; later work can add optional toggleable overlays after the reading surface is validated.
+
+## Previous release notes
 # NAS EPUB Thor v0.5.4 alpha5 — LEFT page 1, RIGHT page 2
 
 ## Change requested after confirmed image-based EPUB reading

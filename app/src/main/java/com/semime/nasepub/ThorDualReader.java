@@ -323,33 +323,34 @@ public final class ThorDualReader {
             theme==2?Color.rgb(88,108,98):Color.rgb(216,202,166));
         return view;
     }
+    /**
+     * The lower screen is a dedicated reading surface: no LEFT PAGE title,
+     * page counter, toolbar, internal margins, or background bands.
+     * Reading controls remain available on the upper screen.
+     */
     private void makeBottom(){
         Context ctx=presentation.getContext();
         LinearLayout panel=new LinearLayout(ctx);
         bottomLayout=panel;
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(ctx,9),dp(ctx,7),dp(ctx,9),dp(ctx,7));
+        panel.setPadding(0,0,0,0);
         panel.setBackgroundColor(paper());
-
-        TextView label=label(ctx,verticalSpread
-            ?"LEFT PAGE ① · 左ページ（1ページ目）"
-            :"下画面 ① · 先に読む",11,true);
-        label.setTextColor(muted());
-        label.setGravity(Gravity.CENTER_VERTICAL);
-        label.setPadding(dp(ctx,7),0,0,0);
-        panel.addView(label,new LinearLayout.LayoutParams(-1,dp(ctx,25)));
 
         bottomText=makePage(ctx,bottomFont,false);
         bottomText.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
             if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
         });
         FrameLayout pageSurface=new FrameLayout(ctx);
+        pageSurface.setPadding(0,0,0,0);
+        pageSurface.setClipToPadding(false);
         pageSurface.addView(bottomText,new FrameLayout.LayoutParams(-1,-1));
         bottomText.setOnClickListener(v->forward());
+
         bottomPicture=new ImageView(ctx);
         bottomPicture.setScaleType(ImageView.ScaleType.FIT_CENTER);
         bottomPicture.setBackgroundColor(paper());
-        bottomPicture.setPadding(dp(ctx,5),dp(ctx,5),dp(ctx,5),dp(ctx,5));
+        bottomPicture.setPadding(0,0,0,0);
+        bottomPicture.setAdjustViewBounds(false);
         bottomPicture.setOnClickListener(v->forward());
         bottomPicture.setVisibility(fixedImages?View.VISIBLE:View.GONE);
         bottomText.setVisibility(fixedImages?View.GONE:View.VISIBLE);
@@ -357,21 +358,28 @@ public final class ThorDualReader {
         pageSurface.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
             if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
         });
-        LinearLayout.LayoutParams body=new LinearLayout.LayoutParams(-1,0,1);
-        panel.addView(pageSurface,body);
+        panel.addView(pageSurface,new LinearLayout.LayoutParams(-1,0,1));
 
-        // Keep controls minimal until two physical pages have been verified.
-        // Next/previous and display settings remain on the top screen.
-        bottomStatus=label(ctx,"LEFT ①",11,false);
-        bottomStatus.setTextColor(muted());
-        bottomStatus.setGravity(Gravity.CENTER);
-        panel.addView(bottomStatus,new LinearLayout.LayoutParams(-1,dp(ctx,24)));
+        // Status is kept for internal diagnostics without occupying pixels.
+        bottomStatus=label(ctx,"",11,false);
+        bottomStatus.setVisibility(View.GONE);
 
-        // Measure the page with the rotated *usable* size. A simple
-        // setRotation() on an unmeasured full-screen layout would clip
-        // nearly the entire book and rotate the bottom UI sideways.
-        presentation.setContentView(
-            new ThorDisplayFrame(ctx,panel,lowerRotation));
+        presentation.setContentView(new ThorDisplayFrame(ctx,panel,lowerRotation));
+    }
+    private void immersiveLowerScreen(){
+        if(presentation==null||presentation.getWindow()==null)return;
+        android.view.Window window=presentation.getWindow();
+        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        window.setNavigationBarColor(paper());
+        window.setStatusBarColor(paper());
+        // Applies to the Presentation window only, not the upper display.
+        window.getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            |View.SYSTEM_UI_FLAG_FULLSCREEN
+            |View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            |View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            |View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            |View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
     public boolean start(){
@@ -383,9 +391,9 @@ public final class ThorDualReader {
         presentation=new Presentation(host,presentationDisplay);
         makeBottom();
         try{
-            if(presentation.getWindow()!=null)
-                presentation.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            immersiveLowerScreen();
             presentation.show();
+            immersiveLowerScreen();
         }catch(RuntimeException e){
             presentation=null;
             return false;
@@ -785,9 +793,8 @@ public final class ThorDualReader {
         if(presentation!=null)presentation.dismiss();
         presentation=new Presentation(host,presentationDisplay);
         makeBottom();
-        if(presentation.getWindow()!=null)
-            presentation.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        try{presentation.show();}
+        immersiveLowerScreen();
+        try{presentation.show();immersiveLowerScreen();}
         catch(RuntimeException error){closeAndExit();return;}
         topLayout.removeAllViews();
         // createTopView returns a freshly constructed layout; the Activity

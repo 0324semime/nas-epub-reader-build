@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.5-thor-alpha6
+- Maximize lower-screen reading surface: remove `LEFT PAGE` header and lower footer/page-number indicators.
+- Remove lower display container and bitmap padding; scale fixed-layout image to the full available canvas while preserving aspect ratio.
+- Request immersive full-screen presentation on the lower display only.
+- Reduce lower/left text-page margins from 20dp to 7dp.
+- Keep upper/right controls and existing two-page order and stable app behavior.
+
+# Changelog
+
 ## v0.5.4-thor-alpha5
 - Reverse visible 2-page spread assignment: LOWER/LEFT shows page 1, UPPER/RIGHT shows page 2.
 - Apply the same reading order to image-based and text-based EPUBs.

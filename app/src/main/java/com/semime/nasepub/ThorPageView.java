@@ -69,8 +69,10 @@ public final class ThorPageView extends View {
         content=value==null?"":value;
         invalidate();
     }
-    private int padSide(){return Math.round(pixels(20));}
-    private int padTop(){return Math.round(pixels(20));}
+    // The smaller lower/LEFT display dedicates almost the whole surface to text.
+    // The upper/RIGHT page keeps comfortable book-like margins.
+    private int padSide(){return Math.round(pixels(rightPage?20:7));}
+    private int padTop(){return Math.round(pixels(rightPage?20:7));}
     private int contentWidth(){return Math.max(0,getWidth()-padSide()*2);}
     private int contentHeight(){return Math.max(0,getHeight()-padTop()*2);}
     private float rowStep(){return ink.getTextSize()*1.48f;}
