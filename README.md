@@ -1,3 +1,21 @@
+# NAS EPUB Thor v0.5.7 alpha8 — correct cover and facing page assignments
+
+## Spread alignment repair
+- The previous image reader paired spine images naively as image 0+1, image 2+3. This made the cover share a spread with a content page and shifted subsequent pairings.
+- The **front cover now appears alone on the upper/right screen**, with the lower/left screen blank. On the next tap, the first two content pages are placed together.
+- If an EPUB metadata cover image exists outside the spine, use it for the opening right-only cover and **do not skip the first spine page**. If the cover is the first spine image, use that image and start subsequent spreads at the second spine image.
+- Honor explicit EPUB OPF spine `page-spread-left`, `page-spread-right`, and `page-spread-center` (including rendition-prefixed forms) on subsequent image pages. Where no positioning is authored, use the requested **lower/left first, upper/right second** pairing.
+- Consecutive same-side declarations yield an empty opposite page rather than an incorrect facing pair.
+- Save positions using spread index v3 while migrating existing v0.5.6 image offsets conservatively. Existing bookmarks with chapter references remain usable; newly created image bookmarks store their spread index.
+- Keep image fidelity, FIT_CENTER, lower full-screen appearance, -90° lower orientation, upper tap forward and lower tap backward. Text-based EPUB layout and normal NAS EPUB Reader are untouched.
+
+## Limits
+- The user's exact EPUB bytes have not been supplied here. Explicit EPUB page placement will be honored if present; otherwise pairing uses the fallback.
+- Books containing precomposed double-page images or unusual front matter still require their own layout checks. The first spine image is assumed to be a cover if there is no separately identified metadata cover.
+- Book cover might be present both as a distinct metadata image and as a separately rendered first XHTML page; if they differ visually, manual checking is needed to prevent duplicate-looking covers.
+- The AYN Thor must verify display mapping and book-specific left/right pair alignment on-device.
+
+## Earlier changes
 # NAS EPUB Thor v0.5.6 alpha7 — tap direction based on physical screen
 
 ## Requested controls
@@ -181,19 +199,4 @@ Add ruby/vertical layout and embedded images with a DOM-aware pagination engine 
 - On SMB folder refresh, list EPUB filenames first, then automatically fetch preview covers and title/author in the background.
 - Preview retrieval uses SMB random-access reads of the ZIP central directory and **only** the EPUB container.xml, package OPF, and cover image. It does NOT download the full EPUB.
 - Independently cache lightweight covers and metadata in Android private storage. Tapping a preview downloads the full EPUB and then opens the existing offline reader.
-- If partial ZIP extraction is unsupported (ZIP64, special compression or unusual layout), the title-only file list remains usable and tapping downloads the full book.
-- Preserve cached full books, separate from lightweight preview entries. An already-downloaded EPUB opens without network traffic.
-- Re-read NAS directory index when user taps 本棚更新.
-- No new server or NAS-side installation required. Only SMB2/3 over embedded Tailscale.
-- First-time full book download is STILL limited by the actual mobile connection speed. This release accelerates bookshelf/cover recognition, not physical transfer bandwidth.
-- Public GitHub debug builds currently have ephemeral signatures: uninstall/reinstall may delete cached books/settings. Stable signing requires a securely stored signing key.
-
-## Previous version: v0.4.2 EPUB transfer diagnostics
-
-## Fixes in v0.4.2
-- Retain full SMB file download exceptions in a pop-up when a single download or cover batch fails.
-- The batch cover importer now reports which EPUB failed and its complete exception-cause chain, with an Android clipboard copy action.
-- Show live transferred bytes during EPUB file download, then switch to a parsing status after the download finishes.
-- Separate "EPUB received" from "EPUB parsed": transfer errors and metadata errors are distinguishable.
-- Add SMB network traffic telemetry to Go tsnet state (accepted connection count, bytes sent to NAS, bytes received from NAS, last transport error).
-- Replace premature teardown of bidirectional TCP streams with half-close and full drain: a probable cause for larg
+- If partial ZIP extraction is unsupported (ZIP64, special compression or unusual layout), the title-only file list remains usable a

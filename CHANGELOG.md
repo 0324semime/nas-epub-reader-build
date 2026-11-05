@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.7-thor-alpha8
+- Display the front cover on the upper/right screen only; leave the lower/left blank on the cover spread.
+- Start content spreads *after* the cover to avoid pairing the cover with page 1 and shifting every subsequent pair.
+- Parse explicit EPUB OPF itemref left/right/center placement and preserve such authored pairing.
+- Support separate manifest cover images as cover-only spread before spine content.
+- Preserve image-page reading, previous/next taps, saved image progress and compatibility for old bookmarks.
+
+# Changelog
+
 ## v0.5.6-thor-alpha7
 - Tap lower/LEFT page to move back one spread (2 physical pages).
 - Tap upper/RIGHT page to advance one spread.

@@ -8,8 +8,8 @@ android {
         applicationId 'com.semime.nasepub.thor'
         minSdk 26
         targetSdk 34
-        versionCode 18
-        versionName '0.5.6-thor-alpha7'
+        versionCode 19
+        versionName '0.5.7-thor-alpha8'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

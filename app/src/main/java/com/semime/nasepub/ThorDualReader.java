@@ -96,6 +96,8 @@ public final class ThorDualReader {
     private boolean fixedImages;
     private final List<FixedPagePosition> imagePages=new ArrayList<>();
     private int imageIndex=0;
+    private int spreadIndex=0;
+    private final List<Spread> imageSpreads=new ArrayList<>();
     private static final class FixedPagePosition {
         final int chapter;
         final FixedEpubPage.Page file;
@@ -103,6 +105,120 @@ public final class ThorDualReader {
             this.chapter=chapter;this.file=file;
         }
     }
+    private static final class Spread {
+        final int left;
+        final int right;
+        final File separateCover;
+        Spread(int left,int right,File special){
+            this.left=left;this.right=right;this.separateCover=special;
+        }
+        boolean coverOnly(){return left<0 && (right>=0 || separateCover!=null);}
+        boolean contains(int image){return left==image || right==image;}
+        int firstImage(){return left>=0?left:right;}
+    }
+
+    private void buildImageSpreads(){
+        imageSpreads.clear();
+        if(imagePages.isEmpty())return;
+        File externalCover=null;
+        int start=0;
+        // EPUB metadata may reference a cover image outside the spine, or
+        // the first spine XHTML may already contain that same cover image.
+        String path=book.optString("cover","");
+        if(!path.isEmpty()){
+            try{
+                File file=new File(bookDir,path).getCanonicalFile();
+                String prefix=bookDir.getCanonicalPath()+File.separator;
+                if(file.getPath().startsWith(prefix)&&file.isFile())
+                    externalCover=file;
+            }catch(Exception ignored){}
+        }
+        boolean coverInFirst=false;
+        if(externalCover!=null){
+            try{
+                coverInFirst=imagePages.get(0).file.image.getCanonicalFile()
+                    .equals(externalCover);
+            }catch(Exception ignored){}
+        }
+        // When the OPF cover has no corresponding spine page, display it
+        // as its own opening spread without discarding the first real page.
+        if(externalCover!=null && !coverInFirst){
+            imageSpreads.add(new Spread(-1,-1,externalCover));
+        }else{
+            // The user wants the front cover alone on the upper/right screen.
+            // If metadata omits a cover reference, the first spine image is
+            // used as the fallback cover, as with this image-based EPUB.
+            imageSpreads.add(new Spread(-1,0,null));
+            start=1;
+        }
+
+        Map<String,Integer> explicit=EpubSpineSides.read(bookDir);
+        int left=-1,right=-1;
+        for(int i=start;i<imagePages.size();i++){
+            FixedPagePosition page=imagePages.get(i);
+            int requested=EpubSpineSides.AUTO;
+            try{requested=explicit.getOrDefault(
+                page.file.xhtml.getCanonicalPath(),EpubSpineSides.AUTO);}
+            catch(Exception ignored){}
+            if(requested==EpubSpineSides.CENTER){
+                if(left>=0||right>=0){
+                    imageSpreads.add(new Spread(left,right,null));
+                    left=-1;right=-1;
+                }
+                imageSpreads.add(new Spread(-1,i,null));
+                continue;
+            }
+            if(requested==EpubSpineSides.LEFT){
+                if(left>=0){
+                    imageSpreads.add(new Spread(left,right,null));
+                    left=-1;right=-1;
+                }
+                left=i;
+            }else if(requested==EpubSpineSides.RIGHT){
+                if(right>=0){
+                    imageSpreads.add(new Spread(left,right,null));
+                    left=-1;right=-1;
+                }
+                right=i;
+            }else{
+                // Preserve the requested left page 1 / right page 2 fallback.
+                // If one side has already been filled by metadata, use the
+                // remaining side instead of silently dropping an image.
+                if(left<0)left=i;
+                else if(right<0)right=i;
+                else{
+                    imageSpreads.add(new Spread(left,right,null));
+                    left=i;right=-1;
+                }
+            }
+            if(left>=0&&right>=0){
+                imageSpreads.add(new Spread(left,right,null));
+                left=-1;right=-1;
+            }
+        }
+        if(left>=0||right>=0)imageSpreads.add(new Spread(left,right,null));
+    }
+
+    private int findSpreadForImage(int oldIndex){
+        for(int i=0;i<imageSpreads.size();i++){
+            if(imageSpreads.get(i).contains(oldIndex))return i;
+        }
+        for(int i=0;i<imageSpreads.size();i++){
+            int first=imageSpreads.get(i).firstImage();
+            if(first>=oldIndex)return i;
+        }
+        return Math.max(0,imageSpreads.size()-1);
+    }
+    private int findSpreadForChapter(int chapter){
+        for(int i=0;i<imageSpreads.size();i++){
+            Spread s=imageSpreads.get(i);
+            for(int index:new int[]{s.left,s.right}){
+                if(index>=0&&imagePages.get(index).chapter>=chapter)return i;
+            }
+        }
+        return Math.max(0,imageSpreads.size()-1);
+    }
+
     private TextView topStatus,bottomStatus,topMark;
     private LinearLayout topLayout,bottomLayout;
     private boolean verticalSpread;
@@ -143,10 +259,15 @@ public final class ThorDualReader {
                 }catch(Exception ignored){}
             }
             fixedImages=imagePages.size()>=4;
-            imageIndex=Math.max(0,Math.min(imagePages.size()-1,
-                prefs.getInt("fixed_img_"+id,0)));
-            if(fixedImages && !imagePages.isEmpty()){
-                cursor=new Cursor(imagePages.get(imageIndex).chapter,0);
+            if(fixedImages){
+                buildImageSpreads();
+                int oldImage=Math.max(0,Math.min(imagePages.size()-1,
+                    prefs.getInt("fixed_img_"+id,0)));
+                spreadIndex=prefs.contains("fixed_spread_v3_"+id)
+                    ?Math.max(0,Math.min(imageSpreads.size()-1,
+                        prefs.getInt("fixed_spread_v3_"+id,0)))
+                    :(oldImage==0?0:findSpreadForImage(oldImage));
+                imageIndex=oldImage;
                 history.clear();
             }
         }
@@ -531,41 +652,56 @@ public final class ThorDualReader {
         Cursor end=advance(start,fit);
         return new Segment(start,end,reading.substring(0,fit));
     }
-    private void showImagePage(ImageView view,int page){
+    private void showImageFile(ImageView view,File image){
         if(view==null)return;
-        if(page<0||page>=imagePages.size()){
+        if(image==null){
             view.setImageDrawable(null);
             return;
         }
-        File image=imagePages.get(page).file.image;
         Bitmap bitmap=FixedEpubPage.decode(image,view.getWidth(),view.getHeight());
         if(bitmap!=null)view.setImageBitmap(bitmap);
         else {
             view.setImageDrawable(null);
-            Toast.makeText(host,"画像ページを読み込めません: "+image.getName(),
+            Toast.makeText(host,"ページ画像を読み込めません: "+image.getName(),
                 Toast.LENGTH_SHORT).show();
         }
     }
+    private void showImagePage(ImageView view,int index){
+        File image=index>=0 && index<imagePages.size()
+            ?imagePages.get(index).file.image:null;
+        showImageFile(view,image);
+    }
     private void drawImagePages(){
-        if(imagePages.isEmpty()||topPicture==null||bottomPicture==null)return;
+        if(imageSpreads.isEmpty()||topPicture==null||bottomPicture==null)return;
         if(topPicture.getWidth()<70||topPicture.getHeight()<70
             ||bottomPicture.getWidth()<70||bottomPicture.getHeight()<70){
             handler.postDelayed(()->drawPages(),160);
             return;
         }
-        imageIndex=Math.max(0,Math.min(imageIndex,imagePages.size()-1));
-        // "imageIndex" is the first page of each 2-page spread.
-        // Physically: LOWER display is LEFT PAGE 1, UPPER display is RIGHT PAGE 2.
-        // Keep the same index/history/bookmarks so alpha4 reading positions survive.
-        cursor=new Cursor(imagePages.get(imageIndex).chapter,0);
-        showImagePage(bottomPicture,imageIndex);
-        showImagePage(topPicture,imageIndex+1);
+        spreadIndex=Math.max(0,Math.min(spreadIndex,imageSpreads.size()-1));
+        Spread spread=imageSpreads.get(spreadIndex);
+        int first=spread.firstImage();
+        imageIndex=Math.max(0,first);
+        cursor=new Cursor(first>=0?imagePages.get(first).chapter:0,0);
+
+        // Front cover: only upper/right page is populated; lower/left is blank.
+        // Content: use OPF page-spread-left/right when provided, otherwise
+        // pair the pages following the cover as left(1), right(2), etc.
+        showImagePage(bottomPicture,spread.left);
+        if(spread.separateCover!=null)
+            showImageFile(topPicture,spread.separateCover);
+        else showImagePage(topPicture,spread.right);
         nextCursor=new Cursor(Math.min(chapters.length(),cursor.chapter+2),0);
-        int left=imageIndex+1;
-        int right=imageIndex+2;
-        topStatus.setText("画像の本  ·  左 "+left+" → 右 "+
-            (right<=imagePages.size()?right:"終わり")+" / "+imagePages.size());
-        bottomStatus.setText("左ページ ①  ·  "+left+" / "+imagePages.size());
+
+        if(spread.coverOnly()){
+            topStatus.setText("表紙  ·  右画面のみ  /  "+imageSpreads.size()+"組");
+        }else{
+            String left=spread.left>=0?String.valueOf(spread.left+1):"—";
+            String right=spread.right>=0?String.valueOf(spread.right+1):"—";
+            topStatus.setText("見開き "+(spreadIndex+1)+"/"+imageSpreads.size()
+                +"  ·  左 "+left+" / 右 "+right);
+        }
+        bottomStatus.setText("");
         if(topMark!=null)topMark.setText(isMarked(cursor)?"◆":"◇");
         save();
     }
@@ -618,12 +754,13 @@ public final class ThorDualReader {
         prefs.edit().putInt("ch_"+id,cursor.chapter)
             .putInt("offset_"+id,cursor.offset)
             .putInt("fixed_img_"+id,imageIndex)
+            .putInt("fixed_spread_v3_"+id,spreadIndex)
             .putString("history_"+id,old.toString()).apply();
     }
     private void forward(){
         if(fixedImages){
-            if(!shown || imageIndex+2>=imagePages.size())return;
-            imageIndex+=2;
+            if(!shown || spreadIndex+1>=imageSpreads.size())return;
+            spreadIndex++;
             drawPages();
             return;
         }
@@ -637,8 +774,8 @@ public final class ThorDualReader {
     }
     private void back(){
         if(fixedImages){
-            if(!shown||imageIndex<2)return;
-            imageIndex-=2;
+            if(!shown||spreadIndex<=0)return;
+            spreadIndex--;
             drawPages();
             return;
         }
@@ -656,7 +793,10 @@ public final class ThorDualReader {
         JSONArray marks=marks();
         for(int i=0;i<marks.length();i++){
             JSONObject o=marks.optJSONObject(i);
-            if(o!=null&&o.optInt("ch",-1)==p.chapter&&o.optInt("ofs",-1)==p.offset)
+            if(o!=null && (fixedImages
+                ? (o.has("spread")?o.optInt("spread",-1)==spreadIndex:
+                   o.optInt("ch",-1)==p.chapter)
+                : (o.optInt("ch",-1)==p.chapter&&o.optInt("ofs",-1)==p.offset)))
                 return true;
         }
         return false;
@@ -668,8 +808,11 @@ public final class ThorDualReader {
         for(int i=0;i<current.length();i++){
             JSONObject point=current.optJSONObject(i);
             if(point==null)continue;
-            if(point.optInt("ch",-1)==cursor.chapter
-                &&point.optInt("ofs",-1)==cursor.offset){
+            if(fixedImages
+                ? (point.has("spread")?point.optInt("spread",-1)==spreadIndex:
+                    point.optInt("ch",-1)==cursor.chapter)
+                : (point.optInt("ch",-1)==cursor.chapter
+                    &&point.optInt("ofs",-1)==cursor.offset)){
                 removed=true;continue;
             }
             result.put(point);
@@ -679,6 +822,7 @@ public final class ThorDualReader {
             try{
                 point.put("ch",cursor.chapter);
                 point.put("ofs",cursor.offset);
+                if(fixedImages)point.put("spread",spreadIndex);
                 result.put(point);
             }catch(Exception ignored){}
         }
@@ -696,8 +840,11 @@ public final class ThorDualReader {
         String[] entries=new String[data.length()];
         for(int i=0;i<data.length();i++){
             JSONObject point=data.optJSONObject(i);
-            entries[i]=point==null?"不明":("第"+(point.optInt("ch",0)+1)
-                +"章  ·  位置"+point.optInt("ofs",0));
+            entries[i]=point==null?"不明":fixedImages
+                ?("見開き "+(point.has("spread")?point.optInt("spread",0)+1:
+                    findSpreadForChapter(point.optInt("ch",0))+1))
+                :("第"+(point.optInt("ch",0)+1)
+                    +"章  ·  位置"+point.optInt("ofs",0));
         }
         new AlertDialog.Builder(host).setTitle("2画面用のしおり")
             .setItems(entries,(dialog,which)->{
@@ -705,12 +852,10 @@ public final class ThorDualReader {
                 if(point!=null){
                     int markChapter=point.optInt("ch",0);
                     if(fixedImages){
-                        for(int i=0;i<imagePages.size();i++){
-                            if(imagePages.get(i).chapter>=markChapter){
-                                imageIndex=(i/2)*2;
-                                break;
-                            }
-                        }
+                        spreadIndex=point.has("spread")
+                            ?Math.max(0,Math.min(imageSpreads.size()-1,
+                                point.optInt("spread",0)))
+                            :findSpreadForChapter(markChapter);
                     }else{
                         cursor=new Cursor(markChapter,point.optInt("ofs",0));
                         history.clear();
