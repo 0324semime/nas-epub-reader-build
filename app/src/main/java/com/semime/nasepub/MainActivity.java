@@ -476,7 +476,7 @@ public final class MainActivity extends Activity {
         TextView appTitle=text("  読書棚",24,true);
         appTitle.setTextColor(accent);
         panel.addView(appTitle);
-        TextView slogan=subtle("    NAS EPUB READER  ·  v0.4.6",11);
+        TextView slogan=subtle("    NAS EPUB THOR  ·  v0.5.1",11);
         slogan.setPadding(0,d(5),0,d(20));
         panel.addView(slogan);
         ScrollView scroll=new ScrollView(this);
@@ -489,7 +489,7 @@ public final class MainActivity extends Activity {
         addDrawerItem(list,"▤","読み取りフォルダ選択","SMBフォルダを参照",()->startFolderBrowser(),dialog);
         addDrawerItem(list,"◇","内蔵Tailscale","外出先接続と通信診断",()->showTailnetPanel(),dialog);
         addDrawerItem(list,"＋","端末のEPUBを追加","ローカルファイルから取り込む",()->pick(),dialog);
-        addDrawerItem(list,"▣","Thor 2画面モード","上画面と下画面に連続する文章を表示",
+        addDrawerItem(list,"▣","Thor 見開きモード","上＝右ページ・下＝左ページの縦書き表示",
             ()->showThorControls(),dialog);
         addDrawerItem(list,"◷","読書設定","文字の大きさ",()->showReaderSettings(),dialog);
         addDrawerItem(list,"▧","キャッシュ管理","表紙データの確認と削除",()->showCacheManager(),dialog);
@@ -573,7 +573,7 @@ public final class MainActivity extends Activity {
     private void showAppInfo(){
         new AlertDialog.Builder(this)
             .setTitle("NAS EPUB Reader · Thor")
-            .setMessage("Version 0.5.0 Thor Mode A (preview)\n\n"
+            .setMessage("Version 0.5.1 Thor Spread (alpha2)\n\n"
                 +"NAS内のEPUBを表紙付きで管理できる読書アプリです。"
                 +"表紙を長押しすると書籍メニューが開きます。\n"
                 +"本文のダウンロードはWi-Fi接続時のみ可能です。\n"
@@ -1649,66 +1649,72 @@ public final class MainActivity extends Activity {
         }else open(book);
     }
     private void showThorControls(){
-        final boolean currently=thorEnabled();
-        String displayStatus=ThorDualReader.displays(this);
+        final boolean enabled=thorEnabled();
+        boolean spread=getSharedPreferences("thor_mode_a_v1",MODE_PRIVATE)
+            .getBoolean("vertical_spread",true);
+        String info=ThorDualReader.displays(this);
         new AlertDialog.Builder(this)
-            .setTitle("AYN Thor 2画面読書")
-            .setMessage("モードA（上画面から下画面へ続けて読む）"
-                +"\n現在: "+(currently?"自動2画面モード":"通常の1画面モード")
-                +"\n\n"+displayStatus
-                +"\n2画面が検出される場合、保存済みの表紙を押すとモードAで開きます。"
-                +"\n画像を含む複雑なEPUBは現在テキスト中心の簡易レイアウトになります。")
+            .setTitle("Thor 専用見開き表示")
+            .setMessage("上画面＝右ページ（最初に読む）\n"
+                +"下画面＝左ページ（その続き）\n"
+                +"現在の表示方式: "+(spread?"縦書き・右から左":"横書き・上から下")
+                +"\n自動2画面読書: "+(enabled?"有効":"無効")
+                +"\n\n"+info
+                +"\n\nまず「見開き表示を試す」で、NASに接続せずに"
+                +"上下ページのサイズ・文章の連続性を確認できます。")
             .setNegativeButton("閉じる",null)
-            .setNeutralButton(currently?"通常1画面に切替":"2画面を既定にする",
+            .setNeutralButton(enabled?"通常表示を既定にする":"2画面表示を既定にする",
                 (dialog,which)->{
-                    getPreferences(0).edit().putBoolean("thor_mode_a",!currently).apply();
-                    Toast.makeText(this,!currently?"2画面モードを有効にしました":
-                        "通常モードに切り替えました",Toast.LENGTH_SHORT).show();
+                    getPreferences(0).edit().putBoolean("thor_mode_a",!enabled).apply();
+                    Toast.makeText(this,!enabled?"2画面モードを有効にしました":
+                        "通常モードを既定にしました",Toast.LENGTH_SHORT).show();
                 })
-            .setPositiveButton("下画面へテスト表示",(dialog,which)->thorDisplayTest())
+            .setPositiveButton("見開き表示を試す",(dialog,which)->thorDisplayTest())
             .show();
     }
+    /** Show both physical pages with sample prose, without SMB/EPUB setup. */
     private void thorDisplayTest(){
-        android.view.Display lower=ThorDualReader.findBottom(this);
-        if(lower==null){
-            new AlertDialog.Builder(this).setTitle("下画面が未検出です")
+        if(thorReader!=null){thorReader.close();thorReader=null;}
+        if(ThorDualReader.findBottom(this)==null){
+            new AlertDialog.Builder(this).setTitle("Thorの下画面が検出されません")
                 .setMessage(ThorDualReader.displays(this)
-                    +"\n端末の下画面をオンにしてからお試しください。")
+                    +"\n\n端末設定で下画面を有効にしてからお試しください。")
                 .setPositiveButton("閉じる",null).show();
             return;
         }
-        android.app.Presentation test=new android.app.Presentation(this,lower);
-        LinearLayout panel=layout(false);
-        panel.setBackgroundColor(Color.rgb(248,245,234));
-        panel.setGravity(Gravity.CENTER);
-        panel.setPadding(d(24),d(18),d(24),d(18));
-        TextView title=text("AYN Thor · 下画面",24,true);
-        title.setGravity(Gravity.CENTER);
-        panel.addView(title);
-        TextView explanation=text(
-            "下画面でこの文字が読めれば表示制御は成功です。\n\n"
-            +"14sp・16sp・18sp・20spの読みやすさを比較できます。",15,false);
-        explanation.setGravity(Gravity.CENTER);
-        explanation.setPadding(0,d(14),0,d(14));
-        panel.addView(explanation);
-        final int[] sizes={14,16,18,20};
-        for(int value:sizes){
-            TextView sample=text(value+"sp：今日は読書を楽しむ日です。",value,false);
-            sample.setGravity(Gravity.CENTER);
-            sample.setPadding(0,d(5),0,d(5));
-            panel.addView(sample);
-        }
-        Button close=button("テストを閉じる",v->test.dismiss());
-        // Replaced below with a local target after the dialog is constructed.
-        panel.addView(close);
-        test.setContentView(panel);
-        try{test.show();}
-        catch(RuntimeException e){
-            new AlertDialog.Builder(this).setTitle("下画面のテストに失敗")
-                .setMessage(e.getClass().getSimpleName()+": "+e.getMessage())
-                .setPositiveButton("閉じる",null).show();
+        try{
+            JSONObject demo=new JSONObject();
+            demo.put("id","thor-spread-demo");
+            demo.put("title","見開き表示テスト");
+            demo.put("chapters",new JSONArray().put("sample.xhtml"));
+            ThorDualReader dual=new ThorDualReader(this,null,demo,()->{
+                if(thorReader!=null){thorReader.close();thorReader=null;}
+                shelf();
+            });
+            screen();
+            root.addView(dual.createTopView(),new LinearLayout.LayoutParams(-1,-1));
+            if(!dual.start()){
+                dual.close();shelf();
+                new AlertDialog.Builder(this)
+                    .setTitle("下画面を開けませんでした")
+                    .setMessage(ThorDualReader.displays(this)
+                        +"\nAndroidの画面表示設定を確認してください。")
+                    .setPositiveButton("閉じる",null).show();
+                return;
+            }
+            thorReader=dual;
+        }catch(Exception e){
+            shelf();
+            new AlertDialog.Builder(this).setTitle("プレビューを開けませんでした")
+                .setMessage(e.toString()).setPositiveButton("閉じる",null).show();
         }
     }
+    void replaceThorTopView(View view){
+        if(root==null)return;
+        root.removeAllViews();
+        root.addView(view,new LinearLayout.LayoutParams(-1,-1));
+    }
+
     private void openThorBook(JSONObject book){
         if(thorReader!=null){thorReader.close();thorReader=null;}
         File folder=new File(library,book.optString("id",""));

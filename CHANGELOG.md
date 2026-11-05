@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.1-thor-alpha2
+- Add native independent-page Japanese right-to-left vertical text rendering for top/right and bottom/left physical screens.
+- Match UTF-16 character pagination to the same drawing layout on both displays, continuing exactly between pages.
+- Add no-NAS-required sample spread preview accessible via Thor navigation.
+- Add spread/horizontal mode selection and per-display typography adjustments.
+- Label page positions and add subtle facing-page edges.
+- Keep original Thor alpha1 reader and ordinary stable library isolated from main branch.
+
+# Changelog
+
 ## v0.5.0-thor-alpha1
 - Branch from stable/v0.4.6 without changing the stable APK.
 - Implement Android Presentation lower-screen text reader and independent page splitting, plus per-display text size.

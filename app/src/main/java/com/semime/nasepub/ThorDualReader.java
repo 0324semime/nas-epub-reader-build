@@ -86,8 +86,10 @@ public final class ThorDualReader {
     private DisplayManager displayManager;
     private Display presentationDisplay;
     private Presentation presentation;
-    private TextView topText,bottomText,topStatus,bottomStatus,topMark;
-    private LinearLayout topLayout;
+    private ThorPageView topText,bottomText;
+    private TextView topStatus,bottomStatus,topMark;
+    private LinearLayout topLayout,bottomLayout;
+    private boolean verticalSpread;
     private Cursor cursor,nextCursor;
     private boolean shown;
     private boolean closing;
@@ -108,6 +110,7 @@ public final class ThorDualReader {
         this.topFont=bound(prefs.getInt("top_font",20),14,26);
         this.bottomFont=bound(prefs.getInt("bottom_font",18),14,26);
         this.theme=bound(prefs.getInt("theme",0),0,2);
+        this.verticalSpread=prefs.getBoolean("vertical_spread",true);
         this.cursor=new Cursor(prefs.getInt("ch_"+id,0),prefs.getInt("offset_"+id,0));
         this.nextCursor=cursor;
         try{
@@ -119,6 +122,11 @@ public final class ThorDualReader {
                     point.optInt("offset",0)));
             }
         }catch(Exception ignored){}
+        if(bookDir==null){
+            // Always start the visual test at the first right page.
+            cursor=new Cursor(0,0);
+            history.clear();
+        }
     }
     private static int bound(int value,int min,int max){
         return Math.max(min,Math.min(max,value));
@@ -169,6 +177,7 @@ public final class ThorDualReader {
         Display primary=activity.getDisplay();
         int primaryId=primary==null?Display.DEFAULT_DISPLAY:primary.getDisplayId();
         Display[] available=dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
+        if(available.length==0)available=dm.getDisplays();
         Display preferred=null;
         long smallest=Long.MAX_VALUE;
         for(Display d:available){
@@ -223,12 +232,15 @@ public final class ThorDualReader {
         settingsParam.leftMargin=dp(5);
         header.addView(settings,settingsParam);
 
-        TextView hint=label(host,"上画面  ·  先に読む",11,false);
+        TextView hint=label(host,verticalSpread?"RIGHT PAGE  ·  右ページ（先に読む）":"上画面  ·  先に読む",11,false);
         hint.setTextColor(muted());
         hint.setPadding(dp(4),dp(12),0,dp(5));
         topLayout.addView(hint);
 
-        topText=makePage(host,topFont);
+        topText=makePage(host,topFont,true);
+        topText.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
+            if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
+        });
         LinearLayout.LayoutParams body=new LinearLayout.LayoutParams(-1,0,1);
         body.topMargin=dp(2);
         body.bottomMargin=dp(5);
@@ -248,21 +260,16 @@ public final class ThorDualReader {
         footer.addView(next,new LinearLayout.LayoutParams(dp(76),-1));
         return topLayout;
     }
-    private TextView makePage(Context ctx,int sp){
-        TextView t=label(ctx,"",sp,false);
-        t.setTypeface(Typeface.SERIF);
-        t.setTextColor(ink());
-        t.setIncludeFontPadding(false);
-        t.setLineSpacing(0,1.31f);
-        t.setGravity(Gravity.TOP|Gravity.START);
-        t.setPadding(dp(10),dp(9),dp(10),dp(7));
-        t.setTextIsSelectable(false);
-        t.setBackground(rounded(paper(),12));
-        return t;
+    private ThorPageView makePage(Context ctx,int fontSize,boolean right){
+        ThorPageView view=new ThorPageView(ctx,fontSize,verticalSpread,right);
+        view.configure(fontSize,verticalSpread,right,ink(),paper(),
+            theme==2?Color.rgb(88,108,98):Color.rgb(216,202,166));
+        return view;
     }
     private void makeBottom(){
         Context ctx=presentation.getContext();
         LinearLayout root=new LinearLayout(ctx);
+        bottomLayout=root;
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(12),dp(11),dp(12),dp(12));
         root.setBackgroundColor(paper());
@@ -270,13 +277,16 @@ public final class ThorDualReader {
         LinearLayout titleBar=new LinearLayout(ctx);
         titleBar.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(42)));
-        TextView title=label(ctx,"下画面  ·  続きを読む",14,true);
+        TextView title=label(ctx,verticalSpread?"LEFT PAGE  ·  左ページ（続き）":"下画面  ·  続きを読む",14,true);
         title.setTextColor(muted());
         titleBar.addView(title,new LinearLayout.LayoutParams(0,-1,1));
         TextView mark=button(ctx,"しおり",v->showMarks());
         titleBar.addView(mark,new LinearLayout.LayoutParams(dp(83),-1));
 
-        bottomText=makePage(ctx,bottomFont);
+        bottomText=makePage(ctx,bottomFont,false);
+        bottomText.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
+            if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
+        });
         LinearLayout.LayoutParams pageLayout=new LinearLayout.LayoutParams(-1,0,1);
         pageLayout.topMargin=dp(6);
         pageLayout.bottomMargin=dp(6);
@@ -306,6 +316,8 @@ public final class ThorDualReader {
         presentation=new Presentation(host,presentationDisplay);
         makeBottom();
         try{
+            if(presentation.getWindow()!=null)
+                presentation.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
             presentation.show();
         }catch(RuntimeException e){
             presentation=null;
@@ -342,6 +354,20 @@ public final class ThorDualReader {
     private String chapterText(int index)throws Exception{
         if(index<0||index>=chapters.length())return "";
         if(chapterCache.containsKey(index))return chapterCache.get(index);
+        if(bookDir==null){
+            String base="私だけの小さな図書室。\n\n"
+                +"開いたページには、静かな午後の物語が広がっていました。"
+                +"一行ずつ文字を追ううちに、遠くの風景が目の前に浮かびます。\n\n"
+                +"上画面の右ページから読み始め、下画面の左ページへ続きを進めます。"
+                +"画面ごとに文章の量が異なっても、順序は変わりません。\n\n"
+                +"縦書きの場合は右端の列から下へ読み、次の列は左隣に進みます。"
+                +"これは上下2画面を使った表示確認用の文章です。\n\n";
+            StringBuilder story=new StringBuilder();
+            for(int i=0;i<24;i++)story.append(base);
+            String text=story.toString();
+            chapterCache.put(index,text);
+            return text;
+        }
         String relative=chapters.optString(index,"");
         File path=new File(bookDir,relative).getCanonicalFile();
         String prefix=bookDir.getCanonicalPath()+File.separator;
@@ -376,45 +402,18 @@ public final class ThorDualReader {
         }
         return new Cursor(chapters.length(),0);
     }
-    private Segment page(Cursor from,TextView destination,int fontSp)throws Exception{
+    private Segment page(Cursor from,ThorPageView destination)throws Exception{
         Cursor start=normal(from);
         if(start.chapter>=chapters.length())return new Segment(start,start,"");
-        String text=chapterText(start.chapter);
-        int position=start.offset;
-        int width=destination.getWidth()-destination.getPaddingLeft()-destination.getPaddingRight();
-        int height=destination.getHeight()-destination.getPaddingTop()-destination.getPaddingBottom();
-        if(width<60||height<90)
-            throw new IllegalStateException("画面の描画サイズがまだ取得できません");
-
-        // StaticLayout's line breaking follows Android TextView rules. Bound
-        // work per page even for very large XHTML chapter files.
-        int trial=Math.min(text.length(),position+9000);
-        String remainder=text.substring(position,trial);
-        TextPaint paint=new TextPaint(Paint.ANTI_ALIAS_FLAG);
-        paint.setTypeface(Typeface.SERIF);
-        DisplayMetrics metrics=destination.getResources().getDisplayMetrics();
-        paint.setTextSize(fontSp*metrics.scaledDensity);
-
-        StaticLayout layout=StaticLayout.Builder
-            .obtain(remainder,0,remainder.length(),paint,width)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .setIncludePad(false)
-            .setLineSpacing(0,1.31f)
-            .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
-            .build();
-        int end=0;
-        for(int i=0;i<layout.getLineCount();i++){
-            if(layout.getLineBottom(i)>height)break;
-            end=layout.getLineEnd(i);
-        }
-        if(end==0)end=Math.min(1,remainder.length());
-        // Don't split high+low UTF-16 surrogate pairs.
-        if(end>0&&end<remainder.length()
-            &&Character.isHighSurrogate(remainder.charAt(end-1))
-            &&Character.isLowSurrogate(remainder.charAt(end)))end--;
-        end=Math.max(1,end);
-        Cursor after=normal(new Cursor(start.chapter,position+end));
-        return new Segment(start,after,remainder.substring(0,end));
+        String source=chapterText(start.chapter);
+        int begin=start.offset;
+        int trial=Math.min(source.length(),begin+7000);
+        String remainder=source.substring(begin,trial);
+        int count=destination.fit(remainder);
+        if(count<=0)throw new IllegalStateException("ページ領域を測定できません");
+        count=Math.min(count,remainder.length());
+        Cursor end=normal(new Cursor(start.chapter,begin+count));
+        return new Segment(start,end,remainder.substring(0,count));
     }
     private void drawPages(){
         if(!shown||closing||drawing||topText==null||bottomText==null)return;
@@ -426,24 +425,26 @@ public final class ThorDualReader {
         drawing=true;
         try{
             cursor=normal(cursor);
-            Segment top=page(cursor,topText,topFont);
-            Segment bottom=page(top.end,bottomText,bottomFont);
-            topText.setText(top.text.isEmpty()?"（本文の終わり）":top.text);
-            bottomText.setText(bottom.text.isEmpty()?"この本の終わりです":bottom.text);
+            Segment top=page(cursor,topText);
+            Segment bottom=page(top.end,bottomText);
+            topText.setPage(top.text.isEmpty()?"（本文の終わり）":top.text);
+            bottomText.setPage(bottom.text.isEmpty()?"この本の終わりです":bottom.text);
             nextCursor=bottom.end;
             int count=chapters.length();
-            topStatus.setText(String.format(Locale.JAPAN,"上 → 下  ·  %d / %d 章",
+            topStatus.setText(String.format(Locale.JAPAN,
+                verticalSpread?"右 ① → 左 ②  ·  %d / %d 章":"上 → 下  ·  %d / %d 章",
                 Math.min(count,cursor.chapter+1),count));
-            bottomStatus.setText("次のページ");
+            bottomStatus.setText(verticalSpread?"左ページ ②":"次のページ");
             topMark.setText(isMarked(cursor)?"◆":"◇");
             save();
         }catch(Exception e){
-            topText.setText("この章を表示できませんでした。\n"+e.getMessage()
-                +"\n\n通常の1画面モードでの閲覧をお試しください。");
-            bottomText.setText("表示できません");
+            topText.setPage("この章を表示できませんでした。\n"+e.getMessage()
+                +"\n通常の1画面モードでお試しください。");
+            bottomText.setPage("表示できません");
         }finally{drawing=false;}
     }
     private void save(){
+        if(bookDir==null)return;
         JSONArray old=new JSONArray();
         for(Cursor h:history){
             JSONObject point=new JSONObject();
@@ -531,54 +532,80 @@ public final class ThorDualReader {
             }).setNegativeButton("閉じる",null).show();
     }
     private void showSettings(){
-        LinearLayout layout=new LinearLayout(host);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(18),dp(10),dp(18),dp(12));
-        TextView topLabel=label(host,"上画面の文字： "+topFont+"sp",15,true);
-        layout.addView(topLabel);
+        LinearLayout area=new LinearLayout(host);
+        area.setOrientation(LinearLayout.VERTICAL);
+        area.setPadding(dp(18),dp(6),dp(18),dp(12));
+
+        TextView modeTitle=label(host,"ページ表示モード",14,true);
+        area.addView(modeTitle);
+        android.widget.RadioGroup mode=new android.widget.RadioGroup(host);
+        android.widget.RadioButton vertical=new android.widget.RadioButton(host);
+        vertical.setText("見開き：上＝右ページ / 下＝左ページ（縦書き）");
+        vertical.setTextSize(13);vertical.setId(8101);mode.addView(vertical);
+        android.widget.RadioButton horizontal=new android.widget.RadioButton(host);
+        horizontal.setText("従来：上から下へ（横書き）");
+        horizontal.setTextSize(13);horizontal.setId(8102);mode.addView(horizontal);
+        mode.check(verticalSpread?8101:8102);
+        area.addView(mode);
+
+        TextView topLabel=label(host,"上画面： "+topFont+"sp",14,true);
+        topLabel.setPadding(0,dp(12),0,0);area.addView(topLabel);
         SeekBar topSlider=new SeekBar(host);
         topSlider.setMax(12);topSlider.setProgress(topFont-14);
-        layout.addView(topSlider);
-        TextView bottomLabel=label(host,"下画面の文字： "+bottomFont+"sp",15,true);
-        bottomLabel.setPadding(0,dp(15),0,0);
-        layout.addView(bottomLabel);
+        area.addView(topSlider);
+        TextView bottomLabel=label(host,"下画面： "+bottomFont+"sp",14,true);
+        area.addView(bottomLabel);
         SeekBar bottomSlider=new SeekBar(host);
         bottomSlider.setMax(12);bottomSlider.setProgress(bottomFont-14);
-        layout.addView(bottomSlider);
+        area.addView(bottomSlider);
+
         SeekBar.OnSeekBarChangeListener listener=new SeekBar.OnSeekBarChangeListener(){
-            public void onProgressChanged(SeekBar bar,int value,boolean byUser){
-                topLabel.setText("上画面の文字： "+(14+topSlider.getProgress())+"sp");
-                bottomLabel.setText("下画面の文字： "+(14+bottomSlider.getProgress())+"sp");
+            public void onProgressChanged(SeekBar bar,int value,boolean fromUser){
+                topLabel.setText("上画面： "+(14+topSlider.getProgress())+"sp");
+                bottomLabel.setText("下画面： "+(14+bottomSlider.getProgress())+"sp");
             }
             public void onStartTrackingTouch(SeekBar bar){}
             public void onStopTrackingTouch(SeekBar bar){}
         };
         topSlider.setOnSeekBarChangeListener(listener);
         bottomSlider.setOnSeekBarChangeListener(listener);
-        TextView note=label(host,
-            "下画面は文字を小さくせず、文章量を減らして表示できます。\n"
-            +"ページは上画面 → 下画面の順に読み、次で2ページ進みます。",12,false);
-        note.setTextColor(muted());
-        note.setPadding(0,dp(12),0,0);
-        layout.addView(note);
-        final String[] themes={"ライト","セピア","ダーク"};
-        new AlertDialog.Builder(host).setTitle("AYN Thor 2画面設定")
-            .setView(layout)
-            .setSingleChoiceItems(themes,theme,(dialog,choice)->{
-                theme=choice;
-                prefs.edit().putInt("theme",theme).apply();
-                dialog.dismiss();showSettings();
-            })
-            .setNegativeButton("閉じる",null)
-            .setPositiveButton("適用",(dialog,which)->{
+        TextView help=label(host,
+            "右ページから左ページへ文章が連続します。"
+            +"下画面は文字を小さくせず、収まる量だけ表示します。",12,false);
+        help.setTextColor(muted());help.setPadding(0,dp(12),0,0);
+        area.addView(help);
+
+        new AlertDialog.Builder(host).setTitle("Thor 見開き表示")
+            .setView(area)
+            .setNegativeButton("キャンセル",null)
+            .setPositiveButton("表示に反映",(dialog,which)->{
+                verticalSpread=mode.getCheckedRadioButtonId()!=8102;
                 topFont=14+topSlider.getProgress();
                 bottomFont=14+bottomSlider.getProgress();
-                prefs.edit().putInt("top_font",topFont)
+                prefs.edit().putBoolean("vertical_spread",verticalSpread)
+                    .putInt("top_font",topFont)
                     .putInt("bottom_font",bottomFont).apply();
-                if(topText!=null)topText.setTextSize(TypedValue.COMPLEX_UNIT_SP,topFont);
-                if(bottomText!=null)bottomText.setTextSize(TypedValue.COMPLEX_UNIT_SP,bottomFont);
-                drawPages();
+                // Rebuild both page surfaces to update their mode labels,
+                // dimensions and typography in one synchronized operation.
+                if(shown&&!closing)rebuildPages();
             }).show();
+    }
+    private void rebuildPages(){
+        if(!shown||closing)return;
+        // Preserve the current pair start. Re-pagination uses each panel's
+        // new measured dimensions, not the other display's font metrics.
+        if(presentation!=null)presentation.dismiss();
+        presentation=new Presentation(host,presentationDisplay);
+        makeBottom();
+        if(presentation.getWindow()!=null)
+            presentation.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        try{presentation.show();}
+        catch(RuntimeException error){closeAndExit();return;}
+        topLayout.removeAllViews();
+        // createTopView returns a freshly constructed layout; the Activity
+        // owns its root, so update the parent through a host callback.
+        host.replaceThorTopView(createTopView());
+        scheduleDraw();
     }
     public void close(){
         if(closing)return;

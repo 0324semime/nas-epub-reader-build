@@ -1,3 +1,23 @@
+# NAS EPUB Thor — v0.5.1 alpha2 (right/left spread)
+
+## First priority: complete the two physical page surfaces
+- **Top physical display = RIGHT page (read first)**, **bottom physical display = LEFT page (read next)**, the Japanese right-to-left spread arrangement.
+- New `ThorPageView` computes how many characters fit on each individual physical screen. Japanese text is painted top-to-bottom, with columns progressing right-to-left. No fake equal-width split: the smaller bottom screen displays fewer characters, without automatically shrinking them.
+- The same native character-placement stepper drives both rendering and pagination, avoiding text overlaps/omissions between the right and left pages.
+- Previous/next still traverse a *pair* of physical pages; long-term reading history uses chapter+UTF-16 position for continuity.
+- A new **no-NAS-required spread preview** is available from the Thor mode drawer: it shows test novel text simultaneously on the two displays. The preview always restarts from the first page.
+- Both layouts are available in the reading Aa control: **right/left vertical** (default) or **top/bottom horizontal** (legacy). Font sizes are individually adjustable for the top and bottom panels from 14–26sp.
+- The top page uses a subtle left seam; the bottom page uses a right seam, like facing pages of a book. Page labels explicitly indicate RIGHT/LEFT.
+- Android DisplayManager+Presentation controls the actual separate lower display; if it cannot be opened, return to the ordinary single-screen reader.
+- Rooting is not required. Actual lower-screen mapping, touch controls and Japanese punctuation layout still require a physical Thor test.
+
+## Current known limitations
+- Alpha 2 is **text-first**, not a fully faithful EPUB renderer: ruby, illustrations, vertical punctuation variants, Latin tate-chu-yoko, exact kinsoku, publisher CSS and professional Japanese layout are not yet guaranteed. Standard horizontal reader is preserved for books with complex formatting.
+- The two-screen reader expects a **downloaded** EPUB in this branch; unlike the later mainline versions, it does not yet support reading an undownloaded remote book through the two-screen renderer.
+- This is an independent app ID `com.semime.nasepub.thor` and APK; it can coexist with the main NAS EPUB Reader. It has independent book storage and settings.
+- Main branch and stable/v0.4.6 are not changed by these experimental commits.
+
+## Previous release details
 # NAS EPUB Thor — Mode A preview v0.5.0-alpha1
 
 This is an **experimental branch** based on verified stable v0.4.6; stable is preserved under `stable/v0.4.6`.
@@ -99,38 +119,4 @@ Add ruby/vertical layout and embedded images with a DOM-aware pagination engine 
 - Replace premature teardown of bidirectional TCP streams with half-close and full drain: a probable cause for large SMB file transfer failures.
 - Keep the working NAS share browser, local bookshelf, and Tailscale login UX unchanged.
 - Debug logs never include passwords or Tailscale authorization tokens. The diagnostic may include the configured private NAS address and the filename.
-- **Test plan:** on mobile data, keep the embedded Tailscale SMB target 192.168.3.4, refresh shelf, tap the EPUB or cover sync, and if failed copy the new detailed diagnostic instead of sending only the count.
-
-## Previous version: v0.4.1 embedded Tailscale connectivity diagnostic
-
-## Fixes in v0.4.1
-- Explicitly display the saved SMB connection route on both bookshelf and folder selection screens.
-- A checked but unsaved Tailscale checkbox no longer silently appears to activate the tunnel: UI warns "未保存".
-- Pressing the Tailscale start button automatically saves the checkbox state and NAS tailnet destination.
-- Add a separate diagnostic action that uses the Go tsnet node to open a TCP connection to the target NAS port 445.
-- The error "failed to connect to /100.x.x.x (port 445) from /10.x.x.x" indicates the **direct** SMB route was used, not the embedded loopback tunnel.
-- Keep LAN SMB settings separate from Tailscale target: LAN host 192.168.3.4, Tailscale target 100.64.209.92 (verify this is your NAS device).
-- For real Tailscale SMB failures, the new probe reports whether port 445 is reachable before SMB user authentication.
-
-## Previous release: v0.4 embedded Tailscale preview
-## What works
-- Local SMB2/3 browsing and EPUB extraction from previous releases
-- Android Java SMBJ connects through Go tsnet's app-local 127.0.0.1-only TCP/445 relay when embedded mode is enabled
-- Start/stop/login/connection status UI, without Android VPNService
-- NAS SMB credentials stored with AndroidKeyStore
-- Tailnet identity stored only in app private files
-- Wi-Fi/LAN mode without Tailscale remains available
-
-## Set up embedded Tailscale
-1. Keep working LAN settings in 接続設定.
-2. Open 内蔵Tailscale設定 and enable SMB接続に内蔵Tailscaleを使用.
-3. Enter NAS Tailscale IP (100.x.x.x) or full *.ts.net MagicDNS name. A private 192.168.x.x address only works with the relevant Tailscale subnet route.
-4. Tap 設定を保存 and Tailscaleを起動 / 再確認.
-5. Tap 接続状態を更新, then ログインURLを開く. Authenticate this app's Tailscale node in a browser.
-6. After status shows connected, return to the shelf and tap 本棚更新.
-7. Test using mobile data only after Wi-Fi works.
-
-## Technical design
-- Native Go tsnet.Server embedded as an arm64 Android AAR via gomobile.
-- Only 127.0.0.1 local TCP listener; no system-wide VPN.
-- Target limited to tailnet
+- **Test plan:** on mobile data, k
