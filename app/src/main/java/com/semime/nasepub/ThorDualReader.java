@@ -90,6 +90,7 @@ public final class ThorDualReader {
     private TextView topStatus,bottomStatus,topMark;
     private LinearLayout topLayout,bottomLayout;
     private boolean verticalSpread;
+    private int lowerRotation;
     private Cursor cursor,nextCursor;
     private boolean shown;
     private boolean closing;
@@ -111,6 +112,9 @@ public final class ThorDualReader {
         this.bottomFont=bound(prefs.getInt("bottom_font",18),14,26);
         this.theme=bound(prefs.getInt("theme",0),0,2);
         this.verticalSpread=prefs.getBoolean("vertical_spread",true);
+        // Thor screenshot showed that the lower screen presents the content
+        // sideways. The default correction can be changed in the Aa dialog.
+        this.lowerRotation=normalizeRotation(prefs.getInt("bottom_rotation",-90));
         this.cursor=new Cursor(prefs.getInt("ch_"+id,0),prefs.getInt("offset_"+id,0));
         this.nextCursor=cursor;
         try{
@@ -127,6 +131,12 @@ public final class ThorDualReader {
             cursor=new Cursor(0,0);
             history.clear();
         }
+    }
+    private static int normalizeRotation(int value){
+        return value==90?90:value==-90?-90:0;
+    }
+    private int dp(Context context,float units){
+        return Math.round(units*context.getResources().getDisplayMetrics().density);
     }
     private static int bound(int value,int min,int max){
         return Math.max(min,Math.min(max,value));
@@ -268,43 +278,40 @@ public final class ThorDualReader {
     }
     private void makeBottom(){
         Context ctx=presentation.getContext();
-        LinearLayout root=new LinearLayout(ctx);
-        bottomLayout=root;
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(12),dp(11),dp(12),dp(12));
-        root.setBackgroundColor(paper());
+        LinearLayout panel=new LinearLayout(ctx);
+        bottomLayout=panel;
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(ctx,9),dp(ctx,7),dp(ctx,9),dp(ctx,7));
+        panel.setBackgroundColor(paper());
 
-        LinearLayout titleBar=new LinearLayout(ctx);
-        titleBar.setGravity(Gravity.CENTER_VERTICAL);
-        root.addView(titleBar,new LinearLayout.LayoutParams(-1,dp(42)));
-        TextView title=label(ctx,verticalSpread?"LEFT PAGE  ·  左ページ（続き）":"下画面  ·  続きを読む",14,true);
-        title.setTextColor(muted());
-        titleBar.addView(title,new LinearLayout.LayoutParams(0,-1,1));
-        TextView mark=button(ctx,"しおり",v->showMarks());
-        titleBar.addView(mark,new LinearLayout.LayoutParams(dp(83),-1));
+        TextView label=label(ctx,verticalSpread
+            ?"LEFT PAGE  ②  ·  左ページ"
+            :"下画面 ②  ·  続き",11,true);
+        label.setTextColor(muted());
+        label.setGravity(Gravity.CENTER_VERTICAL);
+        label.setPadding(dp(ctx,7),0,0,0);
+        panel.addView(label,new LinearLayout.LayoutParams(-1,dp(ctx,25)));
 
         bottomText=makePage(ctx,bottomFont,false);
         bottomText.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or_,ob)->{
             if(r-l!=or_-ol||b-t!=ob-ot)scheduleDraw();
         });
-        LinearLayout.LayoutParams pageLayout=new LinearLayout.LayoutParams(-1,0,1);
-        pageLayout.topMargin=dp(6);
-        pageLayout.bottomMargin=dp(6);
-        root.addView(bottomText,pageLayout);
+        LinearLayout.LayoutParams body=new LinearLayout.LayoutParams(-1,0,1);
+        panel.addView(bottomText,body);
         bottomText.setOnClickListener(v->forward());
 
-        LinearLayout footer=new LinearLayout(ctx);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        root.addView(footer,new LinearLayout.LayoutParams(-1,dp(49)));
-        TextView previous=button(ctx,"‹ 前の2ページ",v->back());
-        footer.addView(previous,new LinearLayout.LayoutParams(0,-1,1));
-        bottomStatus=label(ctx,"2 / 2",12,true);
-        bottomStatus.setGravity(Gravity.CENTER);
+        // Keep controls minimal until two physical pages have been verified.
+        // Next/previous and display settings remain on the top screen.
+        bottomStatus=label(ctx,"LEFT ②",11,false);
         bottomStatus.setTextColor(muted());
-        footer.addView(bottomStatus,new LinearLayout.LayoutParams(0,-1,1));
-        TextView next=button(ctx,"次の2ページ ›",v->forward());
-        footer.addView(next,new LinearLayout.LayoutParams(0,-1,1));
-        presentation.setContentView(root);
+        bottomStatus.setGravity(Gravity.CENTER);
+        panel.addView(bottomStatus,new LinearLayout.LayoutParams(-1,dp(ctx,24)));
+
+        // Measure the page with the rotated *usable* size. A simple
+        // setRotation() on an unmeasured full-screen layout would clip
+        // nearly the entire book and rotate the bottom UI sideways.
+        presentation.setContentView(
+            new ThorDisplayFrame(ctx,panel,lowerRotation));
     }
 
     public boolean start(){
@@ -394,26 +401,59 @@ public final class ThorDualReader {
         }
     }
     private Cursor normal(Cursor input)throws Exception{
-        int ch=Math.max(0,input.chapter),ofs=Math.max(0,input.offset);
+        int ch=Math.max(0,input.chapter);
+        int ofs=Math.max(0,input.offset);
         while(ch<chapters.length()){
             String text=chapterText(ch);
+            // Ignore whitespace-only resources and empty image-only chapters.
+            // Otherwise one XHTML file can consume an entire blank page.
+            while(ofs<text.length()){
+                int cp=text.codePointAt(ofs);
+                if(!Character.isWhitespace(cp) && cp!=0x200B &&
+                    cp!=0xFEFF && cp!=0x00A0)break;
+                ofs+=Character.charCount(cp);
+            }
             if(ofs<text.length())return new Cursor(ch,ofs);
             ch++;ofs=0;
         }
         return new Cursor(chapters.length(),0);
     }
+    private Cursor advance(Cursor from,int count)throws Exception{
+        int ch=from.chapter,ofs=from.offset;
+        int remain=count;
+        while(remain>0 && ch<chapters.length()){
+            String text=chapterText(ch);
+            int n=Math.min(remain,Math.max(0,text.length()-ofs));
+            ofs+=n;remain-=n;
+            if(ofs>=text.length()){
+                ch++;ofs=0;
+            }
+        }
+        return normal(new Cursor(ch,ofs));
+    }
     private Segment page(Cursor from,ThorPageView destination)throws Exception{
         Cursor start=normal(from);
         if(start.chapter>=chapters.length())return new Segment(start,start,"");
-        String source=chapterText(start.chapter);
-        int begin=start.offset;
-        int trial=Math.min(source.length(),begin+7000);
-        String remainder=source.substring(begin,trial);
-        int count=destination.fit(remainder);
-        if(count<=0)throw new IllegalStateException("ページ領域を測定できません");
-        count=Math.min(count,remainder.length());
-        Cursor end=normal(new Cursor(start.chapter,begin+count));
-        return new Segment(start,end,remainder.substring(0,count));
+        StringBuilder reading=new StringBuilder(6000);
+        int ch=start.chapter,offset=start.offset,scanned=0;
+        // EPUBs may contain a cover, half-title or tiny standalone XHTML
+        // pieces. Fill a single physical page across those spine boundaries
+        // instead of yielding one empty/near-empty page per XHTML file.
+        while(ch<chapters.length()&&reading.length()<6000&&scanned++<120){
+            String chapter=chapterText(ch);
+            int available=Math.max(0,chapter.length()-offset);
+            if(available>0){
+                int n=Math.min(available,6000-reading.length());
+                reading.append(chapter,offset,offset+n);
+            }
+            ch++;offset=0;
+        }
+        if(reading.length()==0)return new Segment(start,start,"");
+        int fit=destination.fit(reading.toString());
+        if(fit<=0)throw new IllegalStateException("ページの文字配置を測定できません");
+        fit=Math.min(fit,reading.length());
+        Cursor end=advance(start,fit);
+        return new Segment(start,end,reading.substring(0,fit));
     }
     private void drawPages(){
         if(!shown||closing||drawing||topText==null||bottomText==null)return;
@@ -434,7 +474,11 @@ public final class ThorDualReader {
             topStatus.setText(String.format(Locale.JAPAN,
                 verticalSpread?"右 ① → 左 ②  ·  %d / %d 章":"上 → 下  ·  %d / %d 章",
                 Math.min(count,cursor.chapter+1),count));
-            bottomStatus.setText(verticalSpread?"左ページ ②":"次のページ");
+            bottomStatus.setText(String.format(Locale.JAPAN,
+                verticalSpread?"左ページ ②  ·  %d字":"下画面 ②  ·  %d字",
+                bottom.text.codePointCount(0,bottom.text.length())));
+            topStatus.setText(topStatus.getText()+"  ·  "+
+                top.text.codePointCount(0,top.text.length())+"字");
             topMark.setText(isMarked(cursor)?"◆":"◇");
             save();
         }catch(Exception e){
@@ -535,58 +579,70 @@ public final class ThorDualReader {
         LinearLayout area=new LinearLayout(host);
         area.setOrientation(LinearLayout.VERTICAL);
         area.setPadding(dp(18),dp(6),dp(18),dp(12));
-
-        TextView modeTitle=label(host,"ページ表示モード",14,true);
-        area.addView(modeTitle);
-        android.widget.RadioGroup mode=new android.widget.RadioGroup(host);
+        TextView title=label(host,"本文の向き",14,true);
+        area.addView(title);
+        android.widget.RadioGroup modes=new android.widget.RadioGroup(host);
         android.widget.RadioButton vertical=new android.widget.RadioButton(host);
-        vertical.setText("見開き：上＝右ページ / 下＝左ページ（縦書き）");
-        vertical.setTextSize(13);vertical.setId(8101);mode.addView(vertical);
+        vertical.setText("日本語縦書き：右ページ → 左ページ");
+        vertical.setTextSize(13);vertical.setId(8101);modes.addView(vertical);
         android.widget.RadioButton horizontal=new android.widget.RadioButton(host);
-        horizontal.setText("従来：上から下へ（横書き）");
-        horizontal.setTextSize(13);horizontal.setId(8102);mode.addView(horizontal);
-        mode.check(verticalSpread?8101:8102);
-        area.addView(mode);
+        horizontal.setText("横書き：上画面 → 下画面");
+        horizontal.setTextSize(13);horizontal.setId(8102);modes.addView(horizontal);
+        modes.check(verticalSpread?8101:8102);
+        area.addView(modes);
 
-        TextView topLabel=label(host,"上画面： "+topFont+"sp",14,true);
+        TextView direction=label(host,"下画面の向き",14,true);
+        direction.setPadding(0,dp(12),0,0);
+        area.addView(direction);
+        android.widget.RadioGroup rotations=new android.widget.RadioGroup(host);
+        String[] labels={"-90° （初期値）","0° （回転なし）","+90°"};
+        int[] ids={8201,8202,8203};
+        for(int i=0;i<3;i++){
+            android.widget.RadioButton button=new android.widget.RadioButton(host);
+            button.setText(labels[i]);button.setTextSize(13);button.setId(ids[i]);
+            rotations.addView(button);
+        }
+        rotations.check(lowerRotation==-90?8201:lowerRotation==90?8203:8202);
+        area.addView(rotations);
+
+        TextView topLabel=label(host,"上画面  "+topFont+"sp",14,true);
         topLabel.setPadding(0,dp(12),0,0);area.addView(topLabel);
         SeekBar topSlider=new SeekBar(host);
         topSlider.setMax(12);topSlider.setProgress(topFont-14);
         area.addView(topSlider);
-        TextView bottomLabel=label(host,"下画面： "+bottomFont+"sp",14,true);
+        TextView bottomLabel=label(host,"下画面  "+bottomFont+"sp",14,true);
         area.addView(bottomLabel);
         SeekBar bottomSlider=new SeekBar(host);
         bottomSlider.setMax(12);bottomSlider.setProgress(bottomFont-14);
         area.addView(bottomSlider);
-
-        SeekBar.OnSeekBarChangeListener listener=new SeekBar.OnSeekBarChangeListener(){
-            public void onProgressChanged(SeekBar bar,int value,boolean fromUser){
-                topLabel.setText("上画面： "+(14+topSlider.getProgress())+"sp");
-                bottomLabel.setText("下画面： "+(14+bottomSlider.getProgress())+"sp");
+        SeekBar.OnSeekBarChangeListener l=new SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(SeekBar slider,int value,boolean user){
+                topLabel.setText("上画面  "+(14+topSlider.getProgress())+"sp");
+                bottomLabel.setText("下画面  "+(14+bottomSlider.getProgress())+"sp");
             }
-            public void onStartTrackingTouch(SeekBar bar){}
-            public void onStopTrackingTouch(SeekBar bar){}
+            public void onStartTrackingTouch(SeekBar slider){}
+            public void onStopTrackingTouch(SeekBar slider){}
         };
-        topSlider.setOnSeekBarChangeListener(listener);
-        bottomSlider.setOnSeekBarChangeListener(listener);
-        TextView help=label(host,
-            "右ページから左ページへ文章が連続します。"
-            +"下画面は文字を小さくせず、収まる量だけ表示します。",12,false);
-        help.setTextColor(muted());help.setPadding(0,dp(12),0,0);
-        area.addView(help);
-
-        new AlertDialog.Builder(host).setTitle("Thor 見開き表示")
+        topSlider.setOnSeekBarChangeListener(l);
+        bottomSlider.setOnSeekBarChangeListener(l);
+        TextView note=label(host,
+            "上下それぞれの有効表示領域に文字を配置します。"
+            +"画面が横向きになる場合は、下画面の向きだけ変更してください。",12,false);
+        note.setTextColor(muted());note.setPadding(0,dp(8),0,0);
+        area.addView(note);
+        new AlertDialog.Builder(host).setTitle("Thor 見開き表示の調整")
             .setView(area)
             .setNegativeButton("キャンセル",null)
             .setPositiveButton("表示に反映",(dialog,which)->{
-                verticalSpread=mode.getCheckedRadioButtonId()!=8102;
+                verticalSpread=modes.getCheckedRadioButtonId()!=8102;
+                lowerRotation=rotations.getCheckedRadioButtonId()==8201?-90:
+                    rotations.getCheckedRadioButtonId()==8203?90:0;
                 topFont=14+topSlider.getProgress();
                 bottomFont=14+bottomSlider.getProgress();
                 prefs.edit().putBoolean("vertical_spread",verticalSpread)
+                    .putInt("bottom_rotation",lowerRotation)
                     .putInt("top_font",topFont)
                     .putInt("bottom_font",bottomFont).apply();
-                // Rebuild both page surfaces to update their mode labels,
-                // dimensions and typography in one synchronized operation.
                 if(shown&&!closing)rebuildPages();
             }).show();
     }

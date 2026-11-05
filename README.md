@@ -1,3 +1,21 @@
+# NAS EPUB Thor — v0.5.2 alpha3: visible right/left pages
+
+## Corrected from an actual Thor photograph
+- Both displays appeared almost empty. The lower display UI was rendered 90 degrees sideways, with tiny text at an edge.
+- Add a `ThorDisplayFrame` that rotates the **entire lower Presentation content** and, importantly, **swaps the measured width and height before rotation**. Default rotation is -90°, based on the user's device photograph.
+- In the reading Aa menu, allow setting lower display rotation to -90°, 0° or +90° without changing the main display orientation. The setting persists.
+- Minimize the lower screen header/footer, reclaiming the panel for actual text. Next/previous and main settings remain accessible on the upper display.
+- Correct page pagination: skip empty/whitespace-only EPUB sections and **fill a page across consecutive XHTML spine files** rather than producing almost-blank physical pages for image/title fragments. A single multi-chapter page has a precise continuation cursor for the other display.
+- Show rendered right/left character counts in the footers to help distinguish missing EPUB text from a drawing/layout problem.
+- Preserve the upper=right, lower=left Japanese vertical reading sequence with independent 14–26sp sizes; keep the sample display option and local EPUB support.
+- Scope: the Thor-specific `feature/thor-dual-screen` branch only. The original Android app is not modified.
+
+## Validation
+- GitHub Actions compiles Android app and embedded Tailscale on Android ARM64.
+- The orientation fix and visible EPUB text must be confirmed on physical Thor; the build alone cannot validate firmware display rotation.
+- Image-rich EPUB chapters still cannot be rendered faithfully by the text-only dual renderer; the ordinary one-screen reader remains available.
+
+## Earlier notes
 # NAS EPUB Thor — v0.5.1 alpha2 (right/left spread)
 
 ## First priority: complete the two physical page surfaces

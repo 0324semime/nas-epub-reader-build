@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.2-thor-alpha3
+- Fix sideways AYN Thor lower-screen Presentation with a measured, rotated display container.
+- Allow the user to choose -90, 0 or +90 degree lower-screen orientation.
+- Skip EPUB empty/whitespace-only sections and paginate across short spine documents.
+- Maximize page content on the lower display and expose rendered character-count diagnostics.
+- Preserve stable NAS EPUB Reader, Tailscale and the Thor alpha2 appearance settings.
+
+# Changelog
+
 ## v0.5.1-thor-alpha2
 - Add native independent-page Japanese right-to-left vertical text rendering for top/right and bottom/left physical screens.
 - Match UTF-16 character pagination to the same drawing layout on both displays, continuing exactly between pages.
